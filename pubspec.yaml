@@ -1,0 +1,78 @@
+name: NPD
+description: "application for NPD HRMS."
+publish_to: 'none'
+version: 1.2.1+38
+
+environment:
+  sdk: '>=3.2.6 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  
+  pdf: ^3.10.8
+  printing: ^5.12.0
+  share_plus: 11.1.0
+  path_provider: ^2.0.11
+
+  package_info_plus: ^8.3.0  # Add this line
+  # 📦 แพ็กเกจที่จำเป็น
+  google_fonts: ^6.2.1
+  webview_flutter: ^4.2.3
+  device_info_plus: ^10.1.0
+  # *** เพิ่มบรรทัดนี้เข้ามา ***
+  flutter_localizations: # <--- เพิ่มตรงนี้
+    sdk: flutter         # <--- และบรรทัดนี้
+
+  intl: ^0.20.2
+  permission_handler: ^11.0.1
+  http: ^1.2.1
+  shared_preferences: ^2.2.3
+  change_app_package_name: ^1.5.0
+  geolocator: ^12.0.0
+  google_maps_flutter: ^2.6.1
+
+  # Add these new dependencies
+  image_picker: ^1.1.0 # For picking images (uses Photo Picker - no permission needed)
+  # file_picker: ^8.0.0 # Removed - causes READ_MEDIA_IMAGES permission issue on Google Play
+  open_filex: ^4.3.2 # For opening local files
+  url_launcher: ^6.2.2 # For launching URLs (e.g., opening existing files from server)
+  photo_view: ^0.14.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_launcher_icons: ^0.13.1
+  flutter_native_splash: ^2.3.5
+ 
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/npd_logo_l.png
+    - assets/npd_192x192_padded.png
+    - assets/npd_180x180_padded.png
+    - assets/fonts/angsab.ttf
+    # - assets/fonts/THSarabun Bold.ttf
+ 
+    
+# 🔷 App Icon Configuration
+flutter_launcher_icons:
+  android: true
+  ios: true
+  image_path_android: "assets/npd_192x192_padded.png"
+  image_path_ios: "assets/npd_180x180_padded.png"
+  remove_alpha_ios: true
+  min_sdk_android: 21
+
+# 🔶 Splash Screen Configuration
+flutter_native_splash:
+  color: "#FFFFFF"
+  image: assets/npd_192x192_padded.png
+  android: true
+  ios: true
+  fullscreen: true
+  android_gravity: center
+  ios_content_mode: scaleAspectFit
+
+  
