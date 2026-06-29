@@ -285,6 +285,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
       data['income_transport'],
       data['income_fuel'],
       data['income_commission'],
+      data['income_commission_sale'],
       data['income_other'],
     ]
         .map((e) => double.tryParse(e?.toString() ?? '0') ?? 0)
@@ -293,12 +294,14 @@ class _PayslipScreenState extends State<PayslipScreen> {
     // รวมรายการหัก
     final totalDeduction = [
       data['expense_provident'],
+      data['expense_advance'],
+      data['expense_loan'],
       data['expense_other'],
       data['expense_ksl'],
       data['expense_insurance'],
       data['deduction_late'],
       data['deduction_leave'],
-      data['deduction_absent'],
+      data['missed_days_deduction'],
       data['tax_monthly'],
       data['sso_total'],
     ]
@@ -314,13 +317,13 @@ class _PayslipScreenState extends State<PayslipScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text('สรุปรายการเงินเดือน',
-                style: GoogleFonts.kanit(
+                style: GoogleFonts.ibmPlexSansThai(
                     fontSize: 16, fontWeight: FontWeight.bold)),
             const Divider(),
 
             // ✅ รายได้
             Text('รายได้ / Income',
-                style: GoogleFonts.kanit(
+                style: GoogleFonts.ibmPlexSansThai(
                     fontSize: 15, fontWeight: FontWeight.bold)),
             ..._buildDynamicSection([
               {'label': 'เงินเดือน', 'value': data['base_salary']},
@@ -350,7 +353,15 @@ class _PayslipScreenState extends State<PayslipScreen> {
                 'value': data['income_transport']
               },
               {'label': 'อินเซนทีฟ', 'value': data['income_fuel']},
-              {'label': 'คอมมิชชั่น', 'value': data['income_commission']},
+              {
+                'label': 'คอมมิชชั่น',
+                'value': (double.tryParse(
+                            data['income_commission']?.toString() ?? '0') ??
+                        0) +
+                    (double.tryParse(
+                            data['income_commission_sale']?.toString() ?? '0') ??
+                        0)
+              },
               {'label': 'รายได้อื่นๆ', 'value': data['income_other']},
             ], isDeduction: false),
 
@@ -362,12 +373,12 @@ class _PayslipScreenState extends State<PayslipScreen> {
 
             // ✅ รายการหัก
             Text('รายการหัก / Deduction',
-                style: GoogleFonts.kanit(
+                style: GoogleFonts.ibmPlexSansThai(
                     fontSize: 15, fontWeight: FontWeight.bold)),
             ..._buildDynamicSection([
               {'label': 'สาย', 'value': data['deduction_late']},
               {'label': 'ลากิจ', 'value': data['deduction_leave']},
-              {'label': 'ขาดงาน', 'value': data['deduction_absent']},
+              {'label': 'ขาดงาน', 'value': data['missed_days_deduction']},
               {'label': 'ภาษีหัก ณ ที่จ่าย', 'value': data['tax_monthly']},
               {'label': 'ประกันสังคม', 'value': data['sso_total']},
               {
@@ -375,10 +386,8 @@ class _PayslipScreenState extends State<PayslipScreen> {
                 'value': data['expense_provident']
               },
               {'label': 'กยศ.', 'value': data['expense_ksl']},
-              {
-                'label': 'เงินประกันการทำงาน',
-                'value': data['expense_insurance']
-              },
+              {'label': 'เบิกเงินล่วงหน้า', 'value': data['expense_advance']},
+              {'label': 'เงินกู้', 'value': data['expense_loan']},
               {'label': 'หักอื่นๆ', 'value': data['expense_other']},
             ], isDeduction: true),
 
@@ -390,7 +399,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
 
             // ✅ ยอดสุทธิ
             _summaryRow('ยอดสุทธิ', data['net_salary'],
-                unit: 'บาท', color: Colors.blue, isBold: true),
+                unit: 'บาท', color: const Color(0xFF1A1A1A), isBold: true),
           ],
         ),
       ),
@@ -423,13 +432,13 @@ class _PayslipScreenState extends State<PayslipScreen> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label,
-              style: GoogleFonts.kanit(
+              style: GoogleFonts.ibmPlexSansThai(
                 fontSize: 14,
                 fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
               )),
           Text(
             '${_getFormattedNumber(displayValue)} $unit',
-            style: GoogleFonts.kanit(
+            style: GoogleFonts.ibmPlexSansThai(
               fontSize: 14,
               fontWeight: isBold ? FontWeight.bold : FontWeight.normal,
               color: color,
@@ -444,7 +453,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('สลิปเงินเดือน', style: GoogleFonts.kanit()),
+        title: Text('สลิปเงินเดือน', style: GoogleFonts.ibmPlexSansThai()),
         actions: [
           IconButton(
               icon: const Icon(Icons.refresh), onPressed: _fetchPayslipData),
@@ -458,7 +467,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
               ? Center(
                   child: Text(
                     _errorMessage!,
-                    style: GoogleFonts.kanit(color: Colors.red),
+                    style: GoogleFonts.ibmPlexSansThai(color: Colors.red),
                   ),
                 )
               : SingleChildScrollView(
@@ -481,7 +490,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
                                           DateFormat('MMMM', 'th').format(
                                             DateTime(2000, int.parse(m ?? '1')),
                                           ),
-                                          style: GoogleFonts.kanit(),
+                                          style: GoogleFonts.ibmPlexSansThai(),
                                         )))
                                     .toList(),
                                 onChanged: (val) {
@@ -505,7 +514,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
                                     .map((y) => DropdownMenuItem(
                                         value: y,
                                         child: Text(y,
-                                            style: GoogleFonts.kanit())))
+                                            style: GoogleFonts.ibmPlexSansThai())))
                                     .toList(),
                                 onChanged: (val) {
                                   setState(() {
@@ -547,7 +556,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
               ? FloatingActionButton.extended(
                   heroTag: 'save_button',
                   icon: const Icon(Icons.download),
-                  label: Text('บันทึกไฟล์', style: GoogleFonts.kanit()),
+                  label: Text('บันทึกไฟล์', style: GoogleFonts.ibmPlexSansThai()),
                   onPressed: _savePayslipToDevice,
                 )
               : null,

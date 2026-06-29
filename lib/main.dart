@@ -15,16 +15,23 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 // Import Your Screens
+import 'package:path_provider/path_provider.dart';
+import 'package:open_filex/open_filex.dart';
+import 'odoo_rpc_service.dart';
 import 'checkin_screen.dart';
+import 'notification_service.dart';
 import 'app_bottom_nav_bar.dart';
 import 'add_time_screen.dart';
 import 'leave_screen.dart';
 import 'payslip_screen.dart';
 import 'approve_leave_screen.dart';
 import 'approve_add_time_screen.dart';
+import 'employee_warning_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // 🔔 เริ่มต้น Notification Service
+  await NotificationService().init();
   // Initialize date formatting for all locales you support
   await initializeDateFormatting('th', null);
   await initializeDateFormatting('en', null);
@@ -79,31 +86,157 @@ void main() async {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+/// ล้าง SharedPreferences แบบปลอดภัย
+/// เก็บ keys ที่เกี่ยวกับ "อ่านแล้ว"/สถานะคำขอ ไว้ เพื่อไม่ให้แจ้งเตือนซ้ำหลัง logout/login
+/// ✅ เก็บ theme_color_<userId> ด้วย เพื่อให้สีธีมที่ user ตั้งไว้คงอยู่หลัง logout/login
+Future<void> _safeClearPrefs() async {
+  final prefs = await SharedPreferences.getInstance();
+  final Map<String, Object> keepKeys = {};
+  for (final key in prefs.getKeys()) {
+    if (key.startsWith('warning_read_count_') ||
+        key.startsWith('approver_seen_leave_') ||
+        key.startsWith('approver_seen_addtime_') ||
+        key.startsWith('req_leave_state_') ||
+        key.startsWith('req_addtime_state_') ||
+        key.startsWith('theme_color_')) {
+      final v = prefs.get(key);
+      if (v != null) keepKeys[key] = v;
+    }
+  }
+  await prefs.clear();
+  for (final entry in keepKeys.entries) {
+    final k = entry.key;
+    final v = entry.value;
+    if (v is int) {
+      await prefs.setInt(k, v);
+    } else if (v is String) {
+      await prefs.setString(k, v);
+    } else if (v is bool) {
+      await prefs.setBool(k, v);
+    } else if (v is double) {
+      await prefs.setDouble(k, v);
+    }
+  }
+}
+
+// ✅ Theme Controller — จัดการสีธีมต่อ user
+class ThemeController extends ChangeNotifier {
+  ThemeController._();
+  static final ThemeController instance = ThemeController._();
+
+  // ✅ สีเริ่มต้น = เหลือง NPD เดิม
+  static const Color defaultColor = Color(0xFFFFD600);
+
+  Color _primaryColor = defaultColor;
+  Color get primaryColor => _primaryColor;
+
+  bool get isDefault => _primaryColor.value == defaultColor.value;
+
+  /// โหลดสีที่ user คนนี้บันทึกไว้
+  Future<void> loadForUser(int userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getInt('theme_color_$userId');
+    final newColor = saved != null ? Color(saved) : defaultColor;
+    // ป้องกัน notify ซ้ำเมื่อค่าไม่เปลี่ยน (กัน infinite rebuild)
+    if (newColor.value == _primaryColor.value) return;
+    _primaryColor = newColor;
+    notifyListeners();
+  }
+
+  /// ตั้งสีใหม่ + บันทึก
+  Future<void> setColor(int userId, Color color) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('theme_color_$userId', color.value);
+    if (color.value == _primaryColor.value) return; // ไม่เปลี่ยน → ไม่ notify
+    _primaryColor = color;
+    notifyListeners();
+  }
+
+  /// รีเซ็ตกลับสีเดิม
+  Future<void> reset(int userId) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('theme_color_$userId');
+    if (_primaryColor.value == defaultColor.value) return;
+    _primaryColor = defaultColor;
+    notifyListeners();
+  }
+}
+
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  // ✅ Cache Future ไว้ใน state — สร้างครั้งเดียวตอน initState
+  // ป้องกัน FutureBuilder รัน Future ใหม่ทุกครั้งที่ MaterialApp rebuild
+  late final Future<Widget> _initialScreenFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _initialScreenFuture = _getInitialScreen();
+    // โหลดสีที่บันทึกไว้ (ถ้ามี user login อยู่)
+    _loadSavedThemeIfLoggedIn();
+    ThemeController.instance.addListener(_onThemeChanged);
+  }
+
+  @override
+  void dispose() {
+    ThemeController.instance.removeListener(_onThemeChanged);
+    super.dispose();
+  }
+
+  void _onThemeChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _loadSavedThemeIfLoggedIn() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final userDataString = prefs.getString('userData');
+      if (userDataString != null) {
+        final user = User.fromJson(json.decode(userDataString));
+        await ThemeController.instance.loadForUser(user.id);
+      }
+    } catch (_) {}
+  }
 
   Future<Widget> _getInitialScreen() async {
     final prefs = await SharedPreferences.getInstance();
     final userDataString = prefs.getString('userData');
-    final isDemoUser =
-        prefs.getBool('isDemoUser') ?? false; // ดึงค่า isDemoUser
     if (userDataString != null) {
+      // ✅ เช็คว่าต้อง force logout ไหม (ค่า config เปลี่ยน)
+      final forceLogout = prefs.getBool('forceLogout') ?? false;
+      if (forceLogout) {
+        await _safeClearPrefs();
+        return const PinLoginScreen();
+      }
       return MainAppScreen(
         user: User.fromJson(json.decode(userDataString)),
-        isDemoUser: isDemoUser,
-      ); // ส่ง isDemoUser
+      );
     }
     return const PinLoginScreen();
   }
 
   @override
   Widget build(BuildContext context) {
-    const Color npdOrange = Color.fromARGB(255, 13, 96, 204);
-    const Color npdBlue = Color(0xFF007FFF);
-    const Color npdPink = Color(0xFFFF69B4);
+    // ✅ สีหลักของแอป (อ่านจาก ThemeController — เปลี่ยนได้รายผู้ใช้)
+    final Color npdYellow = ThemeController.instance.primaryColor;
+    final Color npdDarkYellow = npdYellow.withOpacity(0.85);
 
-    const Color lightBackground = Color(0xFFF0F2F5);
-    const Color darkText = Color(0xFF333333);
+    // ✅ กฎสีตัวอักษรบนพื้นสีหลัก:
+    //   - เหลือง NPD (ค่าเริ่มต้น) → ใช้สีดำ
+    //   - สีอื่นๆ ทั้งหมด → ใช้สีขาว
+    final bool isDefaultYellow =
+        npdYellow.value == ThemeController.defaultColor.value;
+    final Color npdBlack =
+        isDefaultYellow ? const Color(0xFF1A1A1A) : Colors.white;
+    final Color npdOrange = npdYellow;
+
+    final Color darkText = const Color(0xFF1A1A1A);
 
     return MaterialApp(
       // ✅ ล็อกขนาด Text ไม่ให้เปลี่ยนตามการตั้งค่าของมือถือ
@@ -116,100 +249,107 @@ class MyApp extends StatelessWidget {
       title: 'NPD HRMS',
       theme: ThemeData(
         colorScheme: ColorScheme.light(
-          primary: npdBlue,
-          secondary: npdPink,
+          primary: npdYellow,
+          secondary: npdBlack,
           surface: Colors.white,
           error: Colors.red.shade700,
-          onPrimary: Colors.white,
+          onPrimary: npdBlack,
           onSecondary: Colors.white,
           onSurface: darkText,
           onError: Colors.white,
-          primaryContainer: npdOrange,
+          primaryContainer: npdYellow,
         ),
-        scaffoldBackgroundColor: lightBackground,
-        textTheme: GoogleFonts.kanitTextTheme(
+        scaffoldBackgroundColor: Colors.white,
+        textTheme: GoogleFonts.ibmPlexSansThaiTextTheme(
           Theme.of(context).textTheme,
         ).apply(bodyColor: darkText),
         appBarTheme: AppBarTheme(
-          backgroundColor: npdBlue,
-          foregroundColor: Colors.white,
+          backgroundColor: npdYellow,
+          foregroundColor: npdBlack,
           elevation: 0,
           centerTitle: true,
-          iconTheme: const IconThemeData(color: Colors.white),
-          titleTextStyle: GoogleFonts.kanit(
-            color: Colors.white,
+          iconTheme: IconThemeData(color: npdBlack),
+          titleTextStyle: GoogleFonts.ibmPlexSansThai(
+            color: npdBlack,
             fontSize: 20,
             fontWeight: FontWeight.w600,
           ),
         ),
-        cardTheme: const CardThemeData(
-          elevation: 4,
+        cardTheme: CardThemeData(
+          elevation: 2,
+          shadowColor: Colors.black.withOpacity(0.08),
           shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(15)),
+            borderRadius: BorderRadius.all(Radius.circular(16)),
           ),
           color: Colors.white,
-          margin: EdgeInsets.symmetric(vertical: 8, horizontal: 0),
+          margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 0),
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: npdOrange,
-            foregroundColor: Colors.white,
+            backgroundColor: npdYellow,
+            foregroundColor: npdBlack,
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
             ),
             padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            textStyle: GoogleFonts.kanit(
+            textStyle: GoogleFonts.ibmPlexSansThai(
               fontSize: 16,
-              fontWeight: FontWeight.w500,
+              fontWeight: FontWeight.w600,
             ),
           ),
         ),
         textButtonTheme: TextButtonThemeData(
           style: TextButton.styleFrom(
-            foregroundColor: npdBlue,
-            textStyle: GoogleFonts.kanit(fontSize: 16),
+            foregroundColor: npdBlack,
+            textStyle: GoogleFonts.ibmPlexSansThai(fontSize: 16),
           ),
         ),
         outlinedButtonTheme: OutlinedButtonThemeData(
           style: OutlinedButton.styleFrom(
-            foregroundColor: npdBlue,
-            side: const BorderSide(color: npdBlue),
+            foregroundColor: npdBlack,
+            side: BorderSide(color: npdYellow, width: 2),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
             ),
-            textStyle: GoogleFonts.kanit(fontSize: 16),
+            textStyle: GoogleFonts.ibmPlexSansThai(fontSize: 16),
           ),
         ),
         snackBarTheme: SnackBarThemeData(
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(10),
-          ),
-          backgroundColor: Colors.black87,
-          contentTextStyle: GoogleFonts.kanit(color: Colors.white),
+          behavior: SnackBarBehavior.fixed,
+          backgroundColor: npdBlack,
+          contentTextStyle: GoogleFonts.ibmPlexSansThai(color: Colors.white),
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
           fillColor: Colors.white,
           border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
+            borderRadius: BorderRadius.circular(12),
             borderSide: BorderSide(color: Colors.grey.shade300),
           ),
           enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: BorderSide(color: Colors.grey.shade400),
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: Colors.grey.shade300),
           ),
           focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(8),
-            borderSide: const BorderSide(color: npdBlue, width: 2),
+            borderRadius: BorderRadius.circular(12),
+            borderSide: BorderSide(color: npdYellow, width: 2),
           ),
-          labelStyle: GoogleFonts.kanit(color: darkText),
-          hintStyle: GoogleFonts.kanit(color: Colors.grey.shade500),
-          prefixIconColor: npdBlue,
+          labelStyle: GoogleFonts.ibmPlexSansThai(color: darkText),
+          hintStyle: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade500),
+          prefixIconColor: npdYellow,
         ),
         progressIndicatorTheme: ProgressIndicatorThemeData(
-          color: npdOrange,
-          linearTrackColor: npdOrange.withOpacity(0.3),
+          color: npdYellow,
+          linearTrackColor: npdYellow.withOpacity(0.3),
+        ),
+        bottomNavigationBarTheme: BottomNavigationBarThemeData(
+          backgroundColor: npdYellow,
+          selectedItemColor: npdBlack,
+          unselectedItemColor: Colors.black54,
+          type: BottomNavigationBarType.fixed,
+          showUnselectedLabels: true,
+          selectedLabelStyle: GoogleFonts.ibmPlexSansThai(fontSize: 12, fontWeight: FontWeight.w600),
+          unselectedLabelStyle: GoogleFonts.ibmPlexSansThai(fontSize: 11),
         ),
       ),
       localizationsDelegates: const [
@@ -288,13 +428,13 @@ class MyApp extends StatelessWidget {
         Locale('zu', ''), // Zulu (generic)
       ],
       home: FutureBuilder<Widget>(
-        future: _getInitialScreen(),
+        future: _initialScreenFuture,
         builder: (context, snapshot) {
           if (snapshot.connectionState == ConnectionState.done) {
             return snapshot.data ?? const PinLoginScreen();
           }
           return Scaffold(
-            body: Center(child: CircularProgressIndicator(color: npdBlue)),
+            body: Center(child: CircularProgressIndicator(color: npdYellow)),
           );
         },
       ),
@@ -473,16 +613,15 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
           'position': data['user']['position'],
         });
 
-        final bool isDemoUser = ['999999', '888888', '777777'].contains(_pin);
+        final bool isDemoUser = false; // ยึดจาก allow_offsite_time ใน Odoo แทน
 
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('userData', json.encode(user.toJson()));
-        await prefs.setBool('isDemoUser', isDemoUser);
 
         if (!mounted) return;
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
-            builder: (_) => MainAppScreen(user: user, isDemoUser: isDemoUser),
+            builder: (_) => MainAppScreen(user: user),
           ),
         );
       } else {
@@ -519,80 +658,136 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final Color primaryColor = Theme.of(context).colorScheme.primary;
-    final Color npdOrange = Theme.of(context).colorScheme.primaryContainer;
-    final Color lightBackground = Theme.of(context).colorScheme.surface;
-    final Color darkText = Theme.of(context).colorScheme.onSurface;
+    // ✅ ใช้สีจาก Theme — เปลี่ยนตาม ThemeController อัตโนมัติ
+    final scheme = Theme.of(context).colorScheme;
+    final Color npdYellow = scheme.primary;
+    final Color npdBlack = scheme.onPrimary;
 
     return Scaffold(
-      backgroundColor: lightBackground,
-      body: Column(
-        // ✅ เปลี่ยนจาก SafeArea เป็น Column ได้เลย
-        children: [
-          Expanded(
-            flex: 1,
-            child: Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Image.asset(
-                    'assets/npd_180x180_padded.png',
-                    width: 120,
-                    height: 120,
-                  ),
-                  const SizedBox(height: 24),
-                  Text(
-                    'ระบุรหัส PIN 6 หลัก',
-                    style: GoogleFonts.kanit(
-                      fontSize: 22,
-                      fontWeight: FontWeight.w500,
-                      color: darkText,
+      body: Container(
+        width: double.infinity,
+        height: double.infinity,
+        decoration: BoxDecoration(
+          // ✅ ปรับ gradient ให้คงโทนสีไว้ที่ด้านล่างด้วย — ตัวเลข numpad อ่านง่ายขึ้น
+          gradient: LinearGradient(
+            colors: [
+              npdYellow, // สีหลักเข้ม (บนสุด)
+              Color.lerp(npdYellow, Colors.white, 0.25) ?? npdYellow, // อ่อน 25%
+              Color.lerp(npdYellow, Colors.white, 0.55) ?? npdYellow, // อ่อน 55%
+              Color.lerp(npdYellow, Colors.white, 0.78) ?? Colors.white, // อ่อน 78% (มีโทนสีหลัก)
+            ],
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            stops: const [0.0, 0.3, 0.65, 1.0],
+          ),
+        ),
+        child: SafeArea(
+          child: Column(
+            children: [
+              // ✅ ส่วนบน - โลโก้ + ข้อความ + PIN dots
+              Expanded(
+                flex: 4,
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    // โลโก้ในวงกลมขาว
+                    Container(
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        shape: BoxShape.circle,
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 20,
+                            offset: const Offset(0, 8),
+                          ),
+                        ],
+                      ),
+                      child: Image.asset(
+                        'assets/npd_180x180_padded.png',
+                        width: 80,
+                        height: 80,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 32),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: List.generate(
-                      6,
-                      (index) => AnimatedContainer(
-                        duration: const Duration(milliseconds: 200),
-                        margin: const EdgeInsets.symmetric(horizontal: 8),
-                        width: 18,
-                        height: 18,
-                        decoration: BoxDecoration(
-                          shape: BoxShape.circle,
-                          color: index < _pin.length
-                              ? npdOrange
-                              : Colors.grey.shade300,
-                          border: Border.all(
-                            color: Colors.grey.shade400,
-                            width: 0.5,
+                    const SizedBox(height: 20),
+                    Text(
+                      'NPD HRMS',
+                      style: GoogleFonts.ibmPlexSansThai(
+                        fontSize: 28,
+                        fontWeight: FontWeight.w700,
+                        color: npdBlack,
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'ระบุรหัส PIN 6 หลัก',
+                      style: GoogleFonts.ibmPlexSansThai(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w400,
+                        color: npdBlack.withOpacity(0.6),
+                      ),
+                    ),
+                    const SizedBox(height: 28),
+                    // PIN dots
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(
+                        6,
+                        (index) => AnimatedContainer(
+                          duration: const Duration(milliseconds: 200),
+                          curve: Curves.easeInOut,
+                          margin: const EdgeInsets.symmetric(horizontal: 8),
+                          width: index < _pin.length ? 20 : 16,
+                          height: index < _pin.length ? 20 : 16,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: index < _pin.length
+                                ? npdBlack
+                                : Colors.transparent,
+                            border: Border.all(
+                              color: index < _pin.length
+                                  ? npdBlack
+                                  : npdBlack.withOpacity(0.3),
+                              width: 2,
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 24),
-                  SizedBox(
-                    height: 40,
-                    child: _isLoading
-                        ? CircularProgressIndicator(color: primaryColor)
-                        : Text(
-                            _errorMessage,
-                            style: GoogleFonts.kanit(
-                              color: Theme.of(context).colorScheme.error,
-                              fontSize: 15,
+                    const SizedBox(height: 20),
+                    // Error / Loading
+                    SizedBox(
+                      height: 36,
+                      child: _isLoading
+                          ? SizedBox(
+                              width: 28,
+                              height: 28,
+                              child: CircularProgressIndicator(
+                                color: npdBlack,
+                                strokeWidth: 3,
+                              ),
+                            )
+                          : Text(
+                              _errorMessage,
+                              style: GoogleFonts.ibmPlexSansThai(
+                                color: Colors.red.shade700,
+                                fontSize: 14,
+                              ),
                             ),
-                          ),
-                  ),
-                ],
+                    ),
+                  ],
+                ),
               ),
-            ),
+              // ✅ ส่วนล่าง - Numpad ไม่มีพื้นหลังแยก ไล่ gradient ต่อเนื่อง
+              Padding(
+                padding: const EdgeInsets.only(top: 8, bottom: 8),
+                child: Numpad(onKeyPressed: _onKeyPressed),
+              ),
+            ],
           ),
-          Numpad(onKeyPressed: _onKeyPressed),
-        ],
+        ),
       ),
     );
   }
@@ -605,65 +800,66 @@ class Numpad extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final buttons = [
-      '1',
-      '2',
-      '3',
-      '4',
-      '5',
-      '6',
-      '7',
-      '8',
-      '9',
-      'forgot',
-      '0',
-      'backspace',
+      '1', '2', '3',
+      '4', '5', '6',
+      '7', '8', '9',
+      'forgot', '0', 'backspace',
     ];
-    final Color darkTextColor = Theme.of(context).colorScheme.onSurface;
+    // ✅ ใช้สีจาก Theme
+    final scheme = Theme.of(context).colorScheme;
+    final Color npdYellow = scheme.primary;
+    final Color npdBlack = scheme.onPrimary;
 
-    return Flexible(
-      child: GridView.builder(
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          childAspectRatio: 1.5,
-        ),
-        itemCount: buttons.length,
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        itemBuilder: (context, index) {
-          final value = buttons[index];
-          if (value == 'forgot')
-            return NumpadButton(
-              child: Text(
-                'ลืมรหัส',
-                style: GoogleFonts.kanit(
-                  fontSize: 15,
-                  color: Colors.grey.shade600,
-                ),
-              ),
-              onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    'กรุณาติดต่อฝ่ายบุคคลเพื่อรีเซ็ตรหัสผ่าน',
-                    style: GoogleFonts.kanit(),
-                  ),
-                ),
-              ),
-            );
-          return NumpadButton(
-            onTap: () => onKeyPressed(value),
-            child: value == 'backspace'
-                ? Icon(Icons.backspace_outlined, color: darkTextColor, size: 28)
-                : Text(
-                    value,
-                    style: GoogleFonts.kanit(
-                      fontSize: 26,
-                      fontWeight: FontWeight.w500,
-                      color: darkTextColor,
-                    ),
-                  ),
-          );
-        },
+    return GridView.builder(
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        childAspectRatio: 1.6,
       ),
+      itemCount: buttons.length,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      itemBuilder: (context, index) {
+        final value = buttons[index];
+        if (value == 'forgot') {
+          return NumpadButton(
+            isSpecial: true,
+            child: Text(
+              'ลืมรหัส',
+              style: GoogleFonts.ibmPlexSansThai(
+                fontSize: 14,
+                color: Colors.grey.shade500,
+              ),
+            ),
+            onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(
+                  'กรุณาติดต่อฝ่ายบุคคลเพื่อรีเซ็ตรหัสผ่าน',
+                  style: GoogleFonts.ibmPlexSansThai(),
+                ),
+              ),
+            ),
+          );
+        }
+        if (value == 'backspace') {
+          return NumpadButton(
+            isSpecial: true,
+            onTap: () => onKeyPressed(value),
+            child: Icon(Icons.backspace_outlined, color: npdBlack.withOpacity(0.7), size: 26),
+          );
+        }
+        return NumpadButton(
+          onTap: () => onKeyPressed(value),
+          child: Text(
+            value,
+            style: GoogleFonts.ibmPlexSansThai(
+              fontSize: 28,
+              fontWeight: FontWeight.w600,
+              color: npdBlack,
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -671,13 +867,29 @@ class Numpad extends StatelessWidget {
 class NumpadButton extends StatelessWidget {
   final Widget child;
   final VoidCallback onTap;
-  const NumpadButton({super.key, required this.child, required this.onTap});
+  final bool isSpecial;
+  const NumpadButton({super.key, required this.child, required this.onTap, this.isSpecial = false});
   @override
-  Widget build(BuildContext context) => InkWell(
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(50),
-        child: Center(child: child),
-      );
+        borderRadius: BorderRadius.circular(40),
+        splashColor: const Color(0xFF1A1A1A).withOpacity(0.08),
+        highlightColor: const Color(0xFF1A1A1A).withOpacity(0.05),
+        child: Center(
+          child: isSpecial
+              ? child
+              : SizedBox(
+                  width: 64,
+                  height: 64,
+                  child: Center(child: child),
+                ),
+        ),
+      ),
+    );
+  }
 }
 
 class MainAppScreen extends StatefulWidget {
@@ -728,6 +940,99 @@ class _MainAppScreenState extends State<MainAppScreen> {
     _initializePages(); // เรียกใช้ก่อน _loadInitialData เพื่อให้ _pages มีค่าและ key ถูกสร้าง
     _loadInitialData(); // โหลดข้อมูลเริ่มต้นและกำหนดหน้า
     _checkAppVersion(); // ✅ เรียกฟังก์ชันตรวจสอบเวอร์ชัน
+    _setupWorkNotifications(); // 🔔 ตั้งแจ้งเตือนเข้า-ออกงาน
+    _checkConfigChanged(); // 🔄 เช็คว่า config เปลี่ยนไหม ถ้าเปลี่ยน force logout
+    // 🎨 โหลดสีธีมที่ user เคยตั้งไว้
+    ThemeController.instance.loadForUser(widget.user.id);
+  }
+
+  // เช็คว่าข้อมูลพนักงานเปลี่ยนไหม + status ต้องเป็น active
+  Future<void> _checkConfigChanged() async {
+    try {
+      final url = 'https://npdhrms.com/api/api_checkin_status1.php?user_id=${widget.user.id}';
+      final response = await http.get(Uri.parse(url)).timeout(const Duration(seconds: 10));
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['status'] == 'success') {
+          final apiData = data['data'];
+          final prefs = await SharedPreferences.getInstance();
+
+          // เช็ค employee status - ถ้า inactive บังคับ logout ทันที
+          final employeeStatus = apiData['employeeStatus']?.toString() ?? 'active';
+          if (employeeStatus == 'inactive') {
+            debugPrint('พนักงานถูกปิดการใช้งาน (inactive) - บังคับ logout');
+            await _safeClearPrefs();
+            if (mounted) {
+              showDialog(
+                context: context,
+                barrierDismissible: false,
+                builder: (ctx) => AlertDialog(
+                  title: Text('บัญชีถูกระงับ', style: GoogleFonts.ibmPlexSansThai(fontWeight: FontWeight.w600)),
+                  content: Text(
+                    'บัญชีของคุณถูกปิดการใช้งาน กรุณาติดต่อฝ่ายบุคคล',
+                    style: GoogleFonts.ibmPlexSansThai(),
+                  ),
+                  actions: [
+                    ElevatedButton(
+                      onPressed: () {
+                        Navigator.of(ctx).pop();
+                        Navigator.of(context).pushAndRemoveUntil(
+                          MaterialPageRoute(builder: (_) => const PinLoginScreen()),
+                          (route) => false,
+                        );
+                      },
+                      child: Text('ตกลง', style: GoogleFonts.ibmPlexSansThai()),
+                    ),
+                  ],
+                ),
+              );
+              return;
+            }
+          }
+
+          // เก็บ config hash จาก API (รวม status)
+          final newConfigHash = '${apiData['allowOffsiteTime']}_${apiData['firstName']}_${apiData['lastName']}_$employeeStatus';
+          final savedConfigHash = prefs.getString('configHash') ?? '';
+
+          if (savedConfigHash.isNotEmpty && savedConfigHash != newConfigHash) {
+            // Config เปลี่ยน → บังคับ login ใหม่
+            debugPrint('Config เปลี่ยน! ($savedConfigHash -> $newConfigHash) บังคับ login ใหม่');
+            await _safeClearPrefs();
+            if (mounted) {
+              Navigator.of(context).pushAndRemoveUntil(
+                MaterialPageRoute(builder: (_) => const PinLoginScreen()),
+                (route) => false,
+              );
+              return;
+            }
+          }
+
+          // บันทึก config hash ล่าสุด
+          await prefs.setString('configHash', newConfigHash);
+        }
+      }
+    } catch (e) {
+      debugPrint('ไม่สามารถเช็ค config ได้: $e');
+    }
+  }
+
+  // 🔔 ตั้งแจ้งเตือนเข้า-ออกงาน จากตาราง Odoo
+  Future<void> _setupWorkNotifications() async {
+    try {
+      final employeeCode = widget.user.employeeCode ?? '';
+      final employeeName = '${widget.user.firstname} ${widget.user.lastname}';
+      const odooBaseUrl = 'https://npderp.com';
+
+      await NotificationService().scheduleWorkNotifications(
+        employeeCode: employeeCode,
+        employeeName: employeeName,
+        odooBaseUrl: odooBaseUrl,
+      );
+      debugPrint('🔔 ตั้งแจ้งเตือนเข้า-ออกงาน สำหรับ $employeeName');
+    } catch (e) {
+      debugPrint('❌ Error setting up notifications: $e');
+    }
   }
 
   void _checkConsultantStatus() {
@@ -773,23 +1078,44 @@ class _MainAppScreenState extends State<MainAppScreen> {
           'Comparison result: $_latestVersion > $_currentVersion = $shouldShowPopup');
 
       if (shouldShowPopup) {
+        // แจ้งเตือนที่หน้ามือถือ (notification bar) ด้วย
+        NotificationService().showUpdateNotification(_latestVersion);
+
         WidgetsBinding.instance.addPostFrameCallback((_) {
           showDialog(
             context: context,
             barrierDismissible: false,
             builder: (context) => AlertDialog(
-              title:
-                  Text('มีเวอร์ชันใหม่ให้อัปเดต', style: GoogleFonts.kanit()),
-              content: Text(
-                'ขณะนี้มีเวอร์ชันใหม่ ($_latestVersion) พร้อมใช้งานแล้ว กรุณาอัปเดตเพื่อประสบการณ์ที่ดีที่สุด',
-                style: GoogleFonts.kanit(),
+              title: Text('มีเวอร์ชันใหม่ v$_latestVersion',
+                  style: GoogleFonts.ibmPlexSansThai(fontWeight: FontWeight.bold)),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text('สิ่งที่ปรับปรุงในเวอร์ชัน 1.3.6',
+                      style: GoogleFonts.ibmPlexSansThai(
+                          fontWeight: FontWeight.bold, fontSize: 15)),
+                  const SizedBox(height: 10),
+                  Text('- สลิปเงินเดือนแสดงค่าคอมมิชชั่นครบ (รวมคอมสาขาและคอม Sale)',
+                      style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
+                  Text('- เพิ่มรายการหัก เบิกเงินล่วงหน้า และ เงินกู้ ในสลิป',
+                      style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
+                  Text('- แก้ยอดหักขาดงานให้ตรงกับระบบเงินเดือน',
+                      style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
+                  const SizedBox(height: 12),
+                  Text(
+                    'กรุณาอัปเดตเพื่อใช้งานเวอร์ชันล่าสุด',
+                    style: GoogleFonts.ibmPlexSansThai(
+                        color: Colors.grey.shade600, fontSize: 13),
+                  ),
+                ],
               ),
               actions: [
                 TextButton(
                   onPressed: () {
                     Navigator.of(context).pop();
                   },
-                  child: Text('ปิด', style: GoogleFonts.kanit()),
+                  child: Text('ปิด', style: GoogleFonts.ibmPlexSansThai()),
                 ),
                 ElevatedButton(
                   onPressed: () async {
@@ -811,7 +1137,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
                             SnackBar(
                               content: Text(
                                 'ไม่สามารถเปิดลิงก์เพื่ออัปเดตได้',
-                                style: GoogleFonts.kanit(),
+                                style: GoogleFonts.ibmPlexSansThai(),
                               ),
                             ),
                           );
@@ -823,14 +1149,14 @@ class _MainAppScreenState extends State<MainAppScreen> {
                           SnackBar(
                             content: Text(
                               'ไม่รองรับแพลตฟอร์มนี้สำหรับการอัปเดต',
-                              style: GoogleFonts.kanit(),
+                              style: GoogleFonts.ibmPlexSansThai(),
                             ),
                           ),
                         );
                       }
                     }
                   },
-                  child: Text('อัปเดตตอนนี้', style: GoogleFonts.kanit()),
+                  child: Text('อัปเดตตอนนี้', style: GoogleFonts.ibmPlexSansThai()),
                 ),
               ],
             ),
@@ -991,7 +1317,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(message, style: GoogleFonts.kanit()),
+          content: Text(message, style: GoogleFonts.ibmPlexSansThai()),
           backgroundColor: isSuccess ? Colors.green : Colors.red,
           duration: const Duration(seconds: 3),
         ),
@@ -1016,7 +1342,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
           SnackBar(
             content: Text(
               'คุณไม่มีสิทธิ์เข้าถึงหน้านี้',
-              style: GoogleFonts.kanit(),
+              style: GoogleFonts.ibmPlexSansThai(),
             ),
             backgroundColor: Theme.of(context).colorScheme.error,
           ),
@@ -1061,24 +1387,417 @@ class _MainAppScreenState extends State<MainAppScreen> {
     }
   }
 
+  // 🎨 แสดง dialog เลือกสีธีม
+  Future<void> _showThemePicker() async {
+    final List<Map<String, dynamic>> presets = [
+      {'name': 'เหลือง NPD (ค่าเริ่มต้น)', 'color': ThemeController.defaultColor},
+      {'name': 'น้ำเงิน', 'color': const Color(0xFF1976D2)},
+      {'name': 'ฟ้า', 'color': const Color(0xFF0288D1)},
+      {'name': 'เขียว', 'color': const Color(0xFF388E3C)},
+      {'name': 'เขียวมิ้นต์', 'color': const Color(0xFF26A69A)},
+      {'name': 'ม่วง', 'color': const Color(0xFF7B1FA2)},
+      {'name': 'ม่วงอมชมพู', 'color': const Color(0xFFAB47BC)},
+      {'name': 'แดง', 'color': const Color(0xFFD32F2F)},
+      {'name': 'ส้ม', 'color': const Color(0xFFF57C00)},
+      {'name': 'ชมพู', 'color': const Color(0xFFE91E63)},
+      {'name': 'น้ำตาล', 'color': const Color(0xFF6D4C41)},
+      {'name': 'เทาเข้ม', 'color': const Color(0xFF424242)},
+    ];
+
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              const Icon(Icons.palette_outlined),
+              const SizedBox(width: 8),
+              Text('เลือกสีธีมแอป',
+                  style: GoogleFonts.ibmPlexSansThai(
+                      fontWeight: FontWeight.bold)),
+            ],
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    'สีปัจจุบันจะถูกบันทึกไว้เฉพาะของคุณ',
+                    style: GoogleFonts.ibmPlexSansThai(
+                        fontSize: 12, color: Colors.grey.shade600),
+                  ),
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      ...presets.map((p) {
+                        final Color color = p['color'] as Color;
+                        final String name = p['name'] as String;
+                        final bool selected = ThemeController
+                                .instance.primaryColor.value ==
+                            color.value;
+                        return InkWell(
+                          onTap: () async {
+                            await ThemeController.instance
+                                .setColor(widget.user.id, color);
+                            if (mounted && Navigator.canPop(ctx)) {
+                              Navigator.of(ctx).pop();
+                            }
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text('เปลี่ยนสีธีมเป็น "$name" แล้ว',
+                                      style: GoogleFonts.ibmPlexSansThai()),
+                                  duration: const Duration(seconds: 2),
+                                ),
+                              );
+                            }
+                          },
+                          child: Tooltip(
+                            message: name,
+                            child: Container(
+                              width: 56,
+                              height: 56,
+                              decoration: BoxDecoration(
+                                color: color,
+                                shape: BoxShape.circle,
+                                border: Border.all(
+                                  color: selected
+                                      ? Colors.black
+                                      : Colors.grey.shade300,
+                                  width: selected ? 3 : 1,
+                                ),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withOpacity(0.08),
+                                    blurRadius: 4,
+                                    offset: const Offset(0, 2),
+                                  )
+                                ],
+                              ),
+                              child: selected
+                                  ? Icon(Icons.check,
+                                      color: ThemeData.estimateBrightnessForColor(
+                                                  color) ==
+                                              Brightness.dark
+                                          ? Colors.white
+                                          : Colors.black,
+                                      size: 28)
+                                  : null,
+                            ),
+                          ),
+                        );
+                      }),
+                      // ปุ่ม "ปรับเอง" — เปิด dialog เลือกสีอิสระ
+                      InkWell(
+                        onTap: () async {
+                          if (mounted && Navigator.canPop(ctx)) {
+                            Navigator.of(ctx).pop();
+                          }
+                          await _showCustomColorPicker();
+                        },
+                        child: Tooltip(
+                          message: 'ปรับสีเอง',
+                          child: Container(
+                            width: 56,
+                            height: 56,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: const SweepGradient(
+                                colors: [
+                                  Color(0xFFFF1744),
+                                  Color(0xFFFFEA00),
+                                  Color(0xFF00E676),
+                                  Color(0xFF00B0FF),
+                                  Color(0xFFD500F9),
+                                  Color(0xFFFF1744),
+                                ],
+                              ),
+                              border: Border.all(
+                                  color: Colors.grey.shade300, width: 1),
+                              boxShadow: [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.08),
+                                  blurRadius: 4,
+                                  offset: const Offset(0, 2),
+                                )
+                              ],
+                            ),
+                            child: const Icon(Icons.colorize,
+                                color: Colors.white, size: 26),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton.icon(
+              icon: Icon(Icons.refresh, color: Colors.grey.shade700),
+              label: Text('รีเซ็ตสีเดิม',
+                  style: GoogleFonts.ibmPlexSansThai(
+                      color: Colors.grey.shade700)),
+              onPressed: ThemeController.instance.isDefault
+                  ? null
+                  : () async {
+                      await ThemeController.instance
+                          .reset(widget.user.id);
+                      if (mounted && Navigator.canPop(ctx)) {
+                        Navigator.of(ctx).pop();
+                      }
+                      if (mounted) {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text('รีเซ็ตเป็นสีเริ่มต้นแล้ว',
+                                style: GoogleFonts.ibmPlexSansThai()),
+                            duration: const Duration(seconds: 2),
+                          ),
+                        );
+                      }
+                    },
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text('ปิด', style: GoogleFonts.ibmPlexSansThai()),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // 🎨 Dialog เลือกสีเอง (HSV sliders + Hex input + preview)
+  Future<void> _showCustomColorPicker() async {
+    HSVColor hsv = HSVColor.fromColor(ThemeController.instance.primaryColor);
+    final TextEditingController hexController = TextEditingController(
+      text: '#${hsv.toColor().value.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}',
+    );
+
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            final Color current = hsv.toColor();
+
+            void updateHexFromHsv() {
+              // อ่าน hsv ตรงๆ (closure variable ถูก mutate ผ่าน setStateDialog แล้ว)
+              // ห้ามอ่านจาก current ที่ build snapshot ไว้ — มันจะเป็นค่าเก่า
+              final c = hsv.toColor();
+              hexController.text =
+                  '#${c.value.toRadixString(16).padLeft(8, '0').substring(2).toUpperCase()}';
+            }
+
+            void applyHex(String input) {
+              String s = input.trim().replaceAll('#', '').toUpperCase();
+              if (s.length == 6) {
+                final int? v = int.tryParse(s, radix: 16);
+                if (v != null) {
+                  setStateDialog(() {
+                    hsv = HSVColor.fromColor(Color(0xFF000000 | v));
+                  });
+                }
+              }
+            }
+
+            Widget hueSliderTrack() {
+              return Container(
+                height: 12,
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(6),
+                  gradient: const LinearGradient(
+                    colors: [
+                      Color(0xFFFF0000),
+                      Color(0xFFFFFF00),
+                      Color(0xFF00FF00),
+                      Color(0xFF00FFFF),
+                      Color(0xFF0000FF),
+                      Color(0xFFFF00FF),
+                      Color(0xFFFF0000),
+                    ],
+                  ),
+                ),
+              );
+            }
+
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              title: Row(
+                children: [
+                  const Icon(Icons.colorize),
+                  const SizedBox(width: 8),
+                  Text('ปรับสีเอง',
+                      style: GoogleFonts.ibmPlexSansThai(
+                          fontWeight: FontWeight.bold)),
+                ],
+              ),
+              content: SizedBox(
+                width: double.maxFinite,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 72,
+                          height: 72,
+                          decoration: BoxDecoration(
+                            color: current,
+                            shape: BoxShape.circle,
+                            border:
+                                Border.all(color: Colors.grey.shade300, width: 1),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.08),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              )
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 16),
+                      Text('Hue (สี)',
+                          style: GoogleFonts.ibmPlexSansThai(fontSize: 13)),
+                      Stack(
+                        alignment: Alignment.center,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 14),
+                            child: hueSliderTrack(),
+                          ),
+                          SliderTheme(
+                            data: SliderTheme.of(context).copyWith(
+                              activeTrackColor: Colors.transparent,
+                              inactiveTrackColor: Colors.transparent,
+                              trackHeight: 12,
+                              thumbColor: Colors.white,
+                              overlayColor: Colors.black.withOpacity(0.06),
+                            ),
+                            child: Slider(
+                              min: 0,
+                              max: 360,
+                              value: hsv.hue,
+                              onChanged: (v) {
+                                setStateDialog(() {
+                                  hsv = hsv.withHue(v);
+                                  updateHexFromHsv();
+                                });
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text('Saturation (ความเข้ม)',
+                          style: GoogleFonts.ibmPlexSansThai(fontSize: 13)),
+                      Slider(
+                        min: 0,
+                        max: 1,
+                        value: hsv.saturation,
+                        activeColor: current,
+                        onChanged: (v) {
+                          setStateDialog(() {
+                            hsv = hsv.withSaturation(v);
+                            updateHexFromHsv();
+                          });
+                        },
+                      ),
+                      Text('Brightness (ความสว่าง)',
+                          style: GoogleFonts.ibmPlexSansThai(fontSize: 13)),
+                      Slider(
+                        min: 0,
+                        max: 1,
+                        value: hsv.value,
+                        activeColor: current,
+                        onChanged: (v) {
+                          setStateDialog(() {
+                            hsv = hsv.withValue(v);
+                            updateHexFromHsv();
+                          });
+                        },
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: hexController,
+                        textCapitalization: TextCapitalization.characters,
+                        decoration: InputDecoration(
+                          labelText: 'Hex',
+                          labelStyle: GoogleFonts.ibmPlexSansThai(),
+                          hintText: '#RRGGBB',
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                          isDense: true,
+                        ),
+                        onSubmitted: applyHex,
+                        onEditingComplete: () => applyHex(hexController.text),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: Text('ยกเลิก', style: GoogleFonts.ibmPlexSansThai()),
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.check),
+                  label: Text('ใช้สีนี้',
+                      style: GoogleFonts.ibmPlexSansThai()),
+                  onPressed: () async {
+                    final picked = hsv.toColor();
+                    await ThemeController.instance
+                        .setColor(widget.user.id, picked);
+                    if (mounted && Navigator.canPop(ctx)) {
+                      Navigator.of(ctx).pop();
+                    }
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('เปลี่ยนสีธีมแล้ว',
+                              style: GoogleFonts.ibmPlexSansThai()),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                    }
+                  },
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
   Future<void> _logout() async {
     final bool? confirmLogout = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
         title: Text(
           'ออกจากระบบ',
-          style: GoogleFonts.kanit(fontWeight: FontWeight.w500),
+          style: GoogleFonts.ibmPlexSansThai(fontWeight: FontWeight.w500),
         ),
         content: Text(
           'คุณต้องการออกจากระบบใช่หรือไม่?',
-          style: GoogleFonts.kanit(),
+          style: GoogleFonts.ibmPlexSansThai(),
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
             child: Text(
               'ยกเลิก',
-              style: GoogleFonts.kanit(
+              style: GoogleFonts.ibmPlexSansThai(
                 color: Theme.of(context).colorScheme.primary,
               ),
             ),
@@ -1087,7 +1806,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
             onPressed: () => Navigator.of(context).pop(true),
             child: Text(
               'ยืนยัน',
-              style: GoogleFonts.kanit(
+              style: GoogleFonts.ibmPlexSansThai(
                 color: Theme.of(context).colorScheme.primary,
               ),
             ),
@@ -1097,8 +1816,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
     );
 
     if (confirmLogout ?? false) {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.clear();
+      await _safeClearPrefs();
+
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
           MaterialPageRoute(builder: (context) => const PinLoginScreen()),
@@ -1116,7 +1835,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
       // Consultant specific titles
       if (_isConsultant) {
         if (_pages[index] is HomePage) {
-          return 'หน้าแรก (${widget.user.firstname})';
+          return 'หน้าแรก (${widget.user.firstname} ${widget.user.lastname})';
         } else if (_pages[index] is PayslipScreen) {
           return 'สลิปเงินเดือน';
         } else if (_pages[index] is ApproveLeaveScreen) {
@@ -1127,7 +1846,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
       } else {
         // Normal user titles
         if (_pages[index] is HomePage) {
-          return 'หน้าแรก (${widget.user.firstname})';
+          return 'หน้าแรก (${widget.user.firstname} ${widget.user.lastname})';
         } else if (_pages[index] is CheckinScreen) {
           return 'ลงเวลา';
         } else if (_pages[index] is LeaveScreen) {
@@ -1158,20 +1877,21 @@ class _MainAppScreenState extends State<MainAppScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_getPageTitle(_selectedIndex)),
-        flexibleSpace: Container(
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                Theme.of(context).colorScheme.primary.withOpacity(0.1),
-                Colors.white,
-              ],
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-            ),
+        title: Text(
+          _getPageTitle(_selectedIndex),
+          style: GoogleFonts.ibmPlexSansThai(
+            fontSize: 15,
+            fontWeight: FontWeight.w600,
           ),
+          overflow: TextOverflow.ellipsis,
+          maxLines: 1,
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.palette_outlined),
+            onPressed: _showThemePicker,
+            tooltip: 'เปลี่ยนสีธีม',
+          ),
           IconButton(
             icon: const Icon(Icons.logout_outlined),
             onPressed: _logout,
@@ -1213,11 +1933,83 @@ class _HomePageState extends State<HomePage> {
   // ✅ เพิ่มตัวแปรเพื่อติดตามว่าควรจะ refresh หรือไม่
   bool _needsRefresh = true;
 
+  // 🔔 จำนวนใบเตือน
+  int _warningCount = 0; // ทั้งหมด (แสดงใน popup ข้อมูลพนักงาน)
+  int _unreadWarningCount = 0; // ยังไม่อ่าน (แสดงบน badge)
+
   @override
   void initState() {
     super.initState();
     // initializeDateFormatting('th', null); // ควรถูกเรียกใน main() แล้ว
     _startHistoryTimer(); // เริ่มจับเวลาสำหรับ history
+    _loadWarningCount();
+  }
+
+  Future<void> _loadWarningCount() async {
+    try {
+      final code = widget.user.employeeCode ?? '';
+      if (code.isEmpty) return;
+      final count =
+          await OdooRpcService().getEmployeeWarningCount(code);
+      if (!mounted) return;
+
+      final prefs = await SharedPreferences.getInstance();
+      final prefKey = 'warning_read_count_$code';
+      final readCount = prefs.getInt(prefKey) ?? 0;
+
+      // ✅ Badge แสดงเฉพาะใบเตือนที่ยังไม่อ่าน (unread = total - read)
+      final unread = count > readCount ? (count - readCount) : 0;
+
+      setState(() {
+        _warningCount = count; // ทั้งหมด
+        _unreadWarningCount = unread; // ยังไม่อ่าน
+      });
+
+      if (unread > 0) {
+        // มีใบเตือนใหม่ที่ยังไม่อ่าน → แจ้งเตือน
+        await NotificationService().showWarningNotification(count: unread);
+      } else {
+        // ไม่มีใบเตือนที่ยังไม่อ่าน → ยกเลิกแจ้งเตือน
+        await NotificationService().cancelWarningNotification();
+      }
+
+      if (count == 0) {
+        // ไม่มีใบเตือนเลย → reset counter
+        await prefs.remove(prefKey);
+      }
+    } catch (e) {
+      debugPrint('Error loading warning count: $e');
+    }
+  }
+
+  /// เรียกเมื่อผู้ใช้เปิดอ่านหน้าใบเตือนแล้ว
+  /// → ยกเลิกการแจ้งเตือน + badge และจำไว้ว่าอ่านจำนวนนี้แล้ว
+  Future<void> _markWarningsAsRead() async {
+    try {
+      final code = widget.user.employeeCode ?? '';
+      if (code.isEmpty) return;
+
+      // ดึงจำนวนใบเตือนจริงจากเซิร์ฟเวอร์
+      final totalCount =
+          await OdooRpcService().getEmployeeWarningCount(code);
+
+      // บันทึกว่าอ่านใบเตือนถึงจำนวนนี้แล้ว
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt('warning_read_count_$code', totalCount);
+
+      // ล้าง badge (unread = 0) แต่ total ยังอยู่
+      if (mounted) {
+        setState(() {
+          _warningCount = totalCount;
+          _unreadWarningCount = 0;
+        });
+      }
+
+      // ยกเลิกแจ้งเตือน
+      await NotificationService().cancelWarningNotification();
+    } catch (e) {
+      debugPrint('Error marking warnings as read: $e');
+    }
   }
 
   // ✅ สร้างเมธอด public ที่ MainAppScreen สามารถเรียกได้
@@ -1232,10 +2024,160 @@ class _HomePageState extends State<HomePage> {
       });
     }
     await _fetchMenuData();
+    // 🔔 refresh warning count ด้วย
+    _loadWarningCount();
+  }
+
+  /// 🔔 เช็คและแจ้งเตือนสำหรับผู้อนุมัติ
+  /// เปรียบเทียบ count ปัจจุบันกับที่ "อ่านแล้ว" ครั้งก่อน
+  /// ถ้ามีคำขอใหม่เพิ่มขึ้น → แจ้งเตือน
+  Future<void> _checkApproverNotifications({
+    required int leaveCount,
+    required int addTimeCount,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    final userId = widget.user.id;
+
+    // ----- คำขอลา -----
+    final seenLeaveKey = 'approver_seen_leave_$userId';
+    final seenLeave = prefs.getInt(seenLeaveKey) ?? 0;
+    if (leaveCount > seenLeave) {
+      await NotificationService()
+          .showApproverLeaveNotification(leaveCount);
+    } else if (leaveCount == 0) {
+      await NotificationService().cancelApproverLeaveNotification();
+      await prefs.remove(seenLeaveKey);
+    }
+
+    // ----- คำขอเพิ่มเวลา -----
+    final seenAddTimeKey = 'approver_seen_addtime_$userId';
+    final seenAddTime = prefs.getInt(seenAddTimeKey) ?? 0;
+    if (addTimeCount > seenAddTime) {
+      await NotificationService()
+          .showApproverAddTimeNotification(addTimeCount);
+    } else if (addTimeCount == 0) {
+      await NotificationService().cancelApproverAddTimeNotification();
+      await prefs.remove(seenAddTimeKey);
+    }
+  }
+
+  /// เรียกเมื่อผู้อนุมัติเข้าหน้าอนุมัติ → mark as seen + cancel notification
+  Future<void> markApproverLeaveAsSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    final count = _menuData?['pending_leave_count'] ?? 0;
+    await prefs.setInt('approver_seen_leave_${widget.user.id}', count);
+    await NotificationService().cancelApproverLeaveNotification();
+  }
+
+  Future<void> markApproverAddTimeAsSeen() async {
+    final prefs = await SharedPreferences.getInstance();
+    final count = _menuData?['pending_addtime_count'] ?? 0;
+    await prefs.setInt('approver_seen_addtime_${widget.user.id}', count);
+    await NotificationService().cancelApproverAddTimeNotification();
+  }
+
+  /// 🔔 เช็คสถานะคำขอของผู้ใช้เอง (การลา + เพิ่มเวลา)
+  /// ถ้า state เปลี่ยนจาก 'รออนุมัติ' → 'อนุมัติ' / 'ไม่อนุมัติ' → แจ้งเตือน
+  Future<void> _checkRequesterStatusNotifications() async {
+    final userId = widget.user.id;
+    final prefs = await SharedPreferences.getInstance();
+
+    // ---- ดึงคำขอลาของผู้ใช้ ----
+    try {
+      final leaveResp = await http.get(Uri.parse(
+          'https://npdhrms.com/api/leave_requests.php?user_id=$userId')).timeout(
+        const Duration(seconds: 15),
+      );
+      if (leaveResp.statusCode == 200) {
+        final body = json.decode(leaveResp.body);
+        final List<dynamic> logs = body is List
+            ? body
+            : (body is Map ? (body['data'] ?? body['logs'] ?? []) : []);
+        for (final l in logs) {
+          if (l is! Map) continue;
+          final id = l['id']?.toString() ?? '';
+          final state = (l['state'] ?? '').toString();
+          if (id.isEmpty || state.isEmpty) continue;
+
+          final key = 'req_leave_state_${userId}_$id';
+          final prevState = prefs.getString(key);
+
+          // ถ้าเคยเห็นเป็น "รออนุมัติ" แต่ตอนนี้เปลี่ยนไปแล้ว → แจ้งเตือน
+          if (prevState == 'รออนุมัติ' && state != 'รออนุมัติ') {
+            final approverName = [
+              (l['approver_firstname'] ?? '').toString(),
+              (l['approver_lastname'] ?? '').toString(),
+            ].where((s) => s.isNotEmpty && s != 'NULL').join(' ');
+            final leaveType = (l['leave_type'] ?? '').toString();
+            final reason = (l['reason'] ?? '').toString();
+            final bodyBuf = StringBuffer();
+            if (leaveType.isNotEmpty) bodyBuf.writeln('ประเภท: $leaveType');
+            if (approverName.isNotEmpty) bodyBuf.writeln('โดย: $approverName');
+            if (reason.isNotEmpty && reason != 'NULL') {
+              bodyBuf.writeln('หมายเหตุ: $reason');
+            }
+            await NotificationService().showInstantNotification(
+              title: 'คำขอลา${state}แล้ว',
+              body: bodyBuf.toString().trim().isEmpty
+                  ? 'อัปเดตสถานะคำขอลา'
+                  : bodyBuf.toString().trim(),
+            );
+          }
+          // บันทึก state ล่าสุดสำหรับคำขอนี้
+          await prefs.setString(key, state);
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Check leave requests error: $e');
+    }
+
+    // ---- ดึงคำขอเพิ่มเวลาของผู้ใช้ ----
+    try {
+      final addResp = await http.get(Uri.parse(
+          'https://npdhrms.com/api/manual_time_logs_test.php?user_id=$userId'))
+          .timeout(const Duration(seconds: 15));
+      if (addResp.statusCode == 200) {
+        final body = json.decode(addResp.body);
+        final List<dynamic> logs = body is List
+            ? body
+            : (body is Map ? (body['data'] ?? body['logs'] ?? []) : []);
+        for (final l in logs) {
+          if (l is! Map) continue;
+          final id = l['id']?.toString() ?? '';
+          final state = (l['state'] ?? '').toString();
+          if (id.isEmpty || state.isEmpty) continue;
+
+          final key = 'req_addtime_state_${userId}_$id';
+          final prevState = prefs.getString(key);
+
+          if (prevState == 'รออนุมัติ' && state != 'รออนุมัติ') {
+            final approverName = [
+              (l['approver_firstname'] ?? '').toString(),
+              (l['approver_lastname'] ?? '').toString(),
+            ].where((s) => s.isNotEmpty && s != 'NULL').join(' ');
+            final reason = (l['reason'] ?? '').toString();
+            final bodyBuf = StringBuffer();
+            if (approverName.isNotEmpty) bodyBuf.writeln('โดย: $approverName');
+            if (reason.isNotEmpty && reason != 'NULL') {
+              bodyBuf.writeln('หมายเหตุ: $reason');
+            }
+            await NotificationService().showInstantNotification(
+              title: 'คำขอเพิ่มเวลา${state}แล้ว',
+              body: bodyBuf.toString().trim().isEmpty
+                  ? 'อัปเดตสถานะคำขอเพิ่มเวลา'
+                  : bodyBuf.toString().trim(),
+            );
+          }
+          await prefs.setString(key, state);
+        }
+      }
+    } catch (e) {
+      debugPrint('⚠️ Check addtime requests error: $e');
+    }
   }
 
   void _startHistoryTimer() {
-    _historyTimer = Timer.periodic(const Duration(seconds: 15), (timer) {
+    _historyTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
       // ✅ ควรเรียกเฉพาะเมื่อหน้า HomePage ถูกแสดงอยู่
       if (mounted) {
         final mainAppScreenState =
@@ -1320,6 +2262,38 @@ class _HomePageState extends State<HomePage> {
                 ._initializePages(); // Re-initialize pages to update bottom nav bar
           });
         }
+
+        // เช็คและแจ้งเตือนเข้า-ออกงาน (เช็คจากประวัติลงเวลาจริง)
+        try {
+          final checkinHistory = data['checkin_history'] ?? [];
+          await NotificationService().checkAndNotify(
+            employeeCode: widget.user.employeeCode ?? '',
+            employeeName: widget.user.firstname,
+            checkinHistory: checkinHistory,
+          );
+        } catch (e) {
+          debugPrint('⚠️ Notification check error: $e');
+        }
+
+        // 🔔 แจ้งเตือนสำหรับผู้อนุมัติ
+        try {
+          final isApprover = data['is_approver'] ?? false;
+          if (isApprover) {
+            await _checkApproverNotifications(
+              leaveCount: data['pending_leave_count'] ?? 0,
+              addTimeCount: data['pending_addtime_count'] ?? 0,
+            );
+          }
+        } catch (e) {
+          debugPrint('⚠️ Approver notification error: $e');
+        }
+
+        // 🔔 เช็คสถานะคำขอของผู้ใช้ (แจ้งเตือนเมื่ออนุมัติ/ปฏิเสธ)
+        try {
+          await _checkRequesterStatusNotifications();
+        } catch (e) {
+          debugPrint('⚠️ Requester notification error: $e');
+        }
       } else {
         if (mounted) {
           setState(() {
@@ -1331,26 +2305,36 @@ class _HomePageState extends State<HomePage> {
       }
     } on TimeoutException catch (e) {
       if (!mounted) return;
-      setState(() {
-        _errorMessage = 'การเชื่อมต่อหมดเวลา กรุณาลองใหม่';
-      });
       debugPrint('Connection Timeout in HomePage: $e');
+      // ✅ ถ้ามีข้อมูลเก่าอยู่แล้ว ไม่ต้องแสดง error (silent fail)
+      if (_menuData == null) {
+        setState(() {
+          _errorMessage = 'การเชื่อมต่อหมดเวลา กรุณาลองใหม่';
+        });
+      }
     } on SocketException catch (e) {
       if (!mounted) return;
-      setState(() {
-        _errorMessage = 'ไม่สามารถเชื่อมต่ออินเทอร์เน็ตได้';
-      });
       debugPrint('Socket Exception (No Internet) in HomePage: $e');
+      // ✅ ถ้ามีข้อมูลเก่าอยู่แล้ว ไม่ต้องแสดง error
+      if (_menuData == null) {
+        setState(() {
+          _errorMessage = 'ไม่สามารถเชื่อมต่ออินเทอร์เน็ตได้';
+        });
+      }
     } on FormatException catch (e) {
       if (!mounted) return;
-      setState(() {
-        _errorMessage = 'รูปแบบข้อมูลไม่ถูกต้องจากเซิร์ฟเวอร์. ($e)';
-      });
       debugPrint('FormatException in HomePage: $e');
+      if (_menuData == null) {
+        setState(() {
+          _errorMessage = 'รูปแบบข้อมูลไม่ถูกต้องจากเซิร์ฟเวอร์';
+        });
+      }
     } catch (e) {
       if (!mounted) return;
-      setState(() => _errorMessage = 'เกิดข้อผิดพลาดในการดึงข้อมูล: $e');
       debugPrint('Error fetching menu data in HomePage: $e');
+      if (_menuData == null) {
+        setState(() => _errorMessage = 'เกิดข้อผิดพลาดในการดึงข้อมูล');
+      }
     } finally {
       if (mounted) {
         setState(() => _isLoading = false);
@@ -1407,7 +2391,7 @@ class _HomePageState extends State<HomePage> {
                   children: [
                     Text(
                       _errorMessage,
-                      style: GoogleFonts.kanit(
+                      style: GoogleFonts.ibmPlexSansThai(
                         color: Theme.of(context).colorScheme.error,
                       ),
                     ),
@@ -1415,7 +2399,7 @@ class _HomePageState extends State<HomePage> {
                     ElevatedButton.icon(
                       onPressed: _fetchMenuData, // Retry button
                       icon: const Icon(Icons.refresh),
-                      label: Text('ลองอีกครั้ง', style: GoogleFonts.kanit()),
+                      label: Text('ลองอีกครั้ง', style: GoogleFonts.ibmPlexSansThai()),
                     ),
                   ],
                 ),
@@ -1425,16 +2409,7 @@ class _HomePageState extends State<HomePage> {
                 onRefresh: _fetchMenuData,
                 color: Theme.of(context).colorScheme.primary,
                 child: Container(
-                  decoration: BoxDecoration(
-                    gradient: LinearGradient(
-                      colors: [
-                        Theme.of(context).colorScheme.primary.withOpacity(0.05),
-                        Theme.of(context).colorScheme.surface,
-                      ],
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                    ),
-                  ),
+                  color: Colors.white,
                   child: ListView(
                     padding: const EdgeInsets.all(16.0),
                     children: [
@@ -1461,7 +2436,7 @@ class _HomePageState extends State<HomePage> {
                           children: [
                             Text(
                               'ประวัติการลงเวลา (3 วันล่าสุด)',
-                              style: GoogleFonts.kanit(
+                              style: GoogleFonts.ibmPlexSansThai(
                                 fontSize: 17,
                                 fontWeight: FontWeight.w500,
                               ),
@@ -1475,36 +2450,29 @@ class _HomePageState extends State<HomePage> {
                                   vertical: 6,
                                 ),
                                 decoration: BoxDecoration(
-                                  color: Colors.white,
+                                  color: Theme.of(context).colorScheme.primary.withOpacity(0.15),
                                   borderRadius: BorderRadius.circular(20),
                                   border: Border.all(
-                                    color: Colors.grey.shade300,
+                                    color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
                                     width: 1,
                                   ),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.grey.withOpacity(0.1),
-                                      blurRadius: 4,
-                                      offset: const Offset(0, 2),
-                                    ),
-                                  ],
                                 ),
                                 child: Row(
                                   mainAxisSize: MainAxisSize.min,
                                   children: [
                                     Text(
                                       'แสดงทั้งหมด',
-                                      style: GoogleFonts.kanit(
+                                      style: GoogleFonts.ibmPlexSansThai(
                                         fontSize: 12,
-                                        fontWeight: FontWeight.w500,
-                                        color: Colors.grey.shade700,
+                                        fontWeight: FontWeight.w600,
+                                        color: const Color(0xFF1A1A1A),
                                       ),
                                     ),
                                     const SizedBox(width: 4),
-                                    Icon(
+                                    const Icon(
                                       Icons.arrow_forward_ios,
                                       size: 12,
-                                      color: Colors.grey.shade600,
+                                      color: Color(0xFF1A1A1A),
                                     ),
                                   ],
                                 ),
@@ -1527,12 +2495,13 @@ class _HomePageState extends State<HomePage> {
     return Column(
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             Expanded(
               child: _MenuCardItem(
-                icon: Icons.check_circle_outline,
+                icon: Icons.fingerprint_rounded,
                 label: 'ลงเวลา',
+                iconBgColor: Theme.of(context).colorScheme.primary,
+                iconColor: Theme.of(context).colorScheme.onPrimary,
                 onTap: () {
                   final mainAppScreenState =
                       context.findAncestorStateOfType<_MainAppScreenState>();
@@ -1541,25 +2510,26 @@ class _HomePageState extends State<HomePage> {
                       mainAppScreenState._onItemTapped(1);
                     });
                   } else {
-                    // Fallback for direct navigation if not in MainAppScreen context
                     Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (context) => CheckinScreen(
                           userId: widget.user.id,
                           isDemoUser: widget.isDemoUser,
-                        ), // ส่ง isDemoUser
+                        ),
                       ),
                     );
                   }
                 },
               ),
             ),
-            const SizedBox(width: 16), // Add spacing between cards
+            const SizedBox(width: 14),
             Expanded(
               child: _MenuCardItem(
-                icon: Icons.calendar_today_outlined,
+                icon: Icons.event_note_rounded,
                 label: 'การลา',
+                iconBgColor: const Color(0xFFFFF3E0),
+                iconColor: const Color(0xFFEF6C00),
                 onTap: () {
                   final mainAppScreenState =
                       context.findAncestorStateOfType<_MainAppScreenState>();
@@ -1580,14 +2550,15 @@ class _HomePageState extends State<HomePage> {
             ),
           ],
         ),
-        const SizedBox(height: 16), // Spacing between rows of cards
+        const SizedBox(height: 14),
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
           children: [
             Expanded(
               child: _MenuCardItem(
-                icon: Icons.history_toggle_off_outlined,
+                icon: Icons.more_time_rounded,
                 label: 'เพิ่มเวลา',
+                iconBgColor: const Color(0xFFE8F5E9),
+                iconColor: const Color(0xFF2E7D32),
                 onTap: () {
                   final mainAppScreenState =
                       context.findAncestorStateOfType<_MainAppScreenState>();
@@ -1606,24 +2577,720 @@ class _HomePageState extends State<HomePage> {
                 },
               ),
             ),
-            const SizedBox(width: 16), // Add spacing between cards
+            const SizedBox(width: 14),
             Expanded(
               child: _MenuCardItem(
-                icon: Icons.receipt_long_outlined,
+                icon: Icons.account_balance_wallet_rounded,
                 label: 'สลิปเงินเดือน',
+                iconBgColor: const Color(0xFFE3F2FD),
+                iconColor: const Color(0xFF1565C0),
                 onTap: () {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (context) => PayslipScreen(user: widget.user),
-                    ), // Pass user object here
+                    ),
                   );
                 },
               ),
             ),
           ],
         ),
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Expanded(
+              child: _MenuCardItem(
+                icon: Icons.person_search_rounded,
+                label: 'ข้อมูลพนักงาน',
+                iconBgColor: const Color(0xFFF3E5F5),
+                iconColor: const Color(0xFF7B1FA2),
+                badgeCount: _unreadWarningCount,
+                onTap: () => _showEmployeeInfoPopup(context),
+              ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: _MenuCardItem(
+                icon: Icons.description_rounded,
+                label: 'เอกสาร ทวิ50',
+                iconBgColor: const Color(0xFFFFF8E1),
+                iconColor: const Color(0xFFE65100),
+                onTap: () => _showWtCertPopup(context),
+              ),
+            ),
+          ],
+        ),
+        // 🔔 ปุ่มทดสอบแจ้งเตือน (ซ่อนไว้ - เปิดตอน debug)
       ],
+    );
+  }
+
+  // ✅ ดึงข้อมูลพนักงานจาก Odoo ผ่าน JSON-RPC
+  Future<void> _showEmployeeInfoPopup(BuildContext context) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Center(child: CircularProgressIndicator(color: Theme.of(context).colorScheme.primary)),
+    );
+
+    try {
+      final employeeCode = widget.user.employeeCode ?? '';
+      final odoo = OdooRpcService();
+
+      // 🔔 โหลดข้อมูลพนักงาน + จำนวนใบเตือนพร้อมกัน
+      final results = await Future.wait([
+        odoo.getEmployeeInfo(employeeCode),
+        odoo.getEmployeeWarningCount(employeeCode),
+      ]);
+      final data = results[0] as Map<String, dynamic>?;
+      final warnCount = results[1] as int;
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+
+      // อัพเดท count/badge จาก server จริง
+      final prefs = await SharedPreferences.getInstance();
+      final readCount =
+          prefs.getInt('warning_read_count_$employeeCode') ?? 0;
+      final unread =
+          warnCount > readCount ? (warnCount - readCount) : 0;
+      setState(() {
+        _warningCount = warnCount;
+        _unreadWarningCount = unread;
+      });
+
+      if (data != null) {
+        _showEmployeeDataDialog(context, data);
+      } else {
+        _showErrorSnackbar(context, 'ไม่พบข้อมูลพนักงาน');
+      }
+    } on TimeoutException {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      _showErrorSnackbar(context, 'การเชื่อมต่อหมดเวลา');
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      _showErrorSnackbar(context, 'เกิดข้อผิดพลาด: $e');
+    }
+  }
+
+  // ===== ทวิ 50 ผ่าน JSON-RPC =====
+  Future<void> _showWtCertPopup(BuildContext context) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Center(child: CircularProgressIndicator(color: Theme.of(context).colorScheme.primary)),
+    );
+
+    try {
+      final employeeCode = widget.user.employeeCode ?? '';
+      final odoo = OdooRpcService();
+      final certs = await odoo.getWtCertList(employeeCode);
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+
+      if (certs.isEmpty) {
+        showDialog(
+          context: context,
+          builder: (_) => AlertDialog(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            icon: Icon(Icons.info_outline, color: Theme.of(context).colorScheme.primary, size: 48),
+            title: Text('ไม่พบเอกสาร ทวิ50', style: GoogleFonts.ibmPlexSansThai(fontWeight: FontWeight.w600)),
+            content: Text(
+              'ยังไม่มีเอกสารหนังสือรับรองภาษีหัก ณ ที่จ่าย (ทวิ50)\nในระบบสำหรับคุณ',
+              textAlign: TextAlign.center,
+              style: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade600),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text('ตกลง', style: GoogleFonts.ibmPlexSansThai(fontWeight: FontWeight.w600)),
+              ),
+            ],
+          ),
+        );
+        return;
+      }
+      _showWtCertListDialog(context, certs);
+    } on TimeoutException {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      _showErrorSnackbar(context, 'การเชื่อมต่อหมดเวลา');
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      _showErrorSnackbar(context, 'เกิดข้อผิดพลาด: $e');
+    }
+  }
+
+  void _showWtCertListDialog(BuildContext context, List certs) {
+    final Color npdYellow = Theme.of(context).colorScheme.primary;
+    const Color npdBlack = Color(0xFF1A1A1A);
+
+    String formatMoney(dynamic value) {
+      final num v = (value is num) ? value : double.tryParse(value.toString()) ?? 0;
+      return v.toStringAsFixed(2).replaceAllMapped(
+        RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+        (m) => '${m[1]},',
+      );
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.75,
+          maxChildSize: 0.95,
+          minChildSize: 0.4,
+          builder: (_, scrollController) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(28),
+                  topRight: Radius.circular(28),
+                ),
+              ),
+              child: Column(
+                children: [
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    width: 40, height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  // Header
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: npdYellow,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Icon(Icons.description_rounded, size: 28, color: npdBlack),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Text(
+                            'เอกสาร ทวิ50',
+                            style: GoogleFonts.ibmPlexSansThai(
+                              fontSize: 18, fontWeight: FontWeight.w600, color: npdBlack,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  // Cert List
+                  Expanded(
+                    child: ListView.builder(
+                      controller: scrollController,
+                      padding: const EdgeInsets.all(16),
+                      itemCount: certs.length,
+                      itemBuilder: (_, index) {
+                        final cert = certs[index];
+                        final lines = cert['lines'] as List? ?? [];
+                        final totalBase = lines.fold<double>(0.0, (sum, l) => sum + ((l['base'] as num?)?.toDouble() ?? 0.0));
+                        final totalTax = lines.fold<double>(0.0, (sum, l) => sum + ((l['amount'] as num?)?.toDouble() ?? 0.0));
+
+                        return Container(
+                          margin: const EdgeInsets.only(bottom: 14),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: npdYellow.withOpacity(0.5), width: 1.5),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.04),
+                                blurRadius: 8, offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Column(
+                            children: [
+                              // Year header
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                decoration: BoxDecoration(
+                                  color: npdYellow.withOpacity(0.15),
+                                  borderRadius: const BorderRadius.only(
+                                    topLeft: Radius.circular(15),
+                                    topRight: Radius.circular(15),
+                                  ),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.calendar_today_rounded, size: 18, color: npdBlack),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'ปี ${cert['report_year'] ?? '-'}',
+                                      style: GoogleFonts.ibmPlexSansThai(
+                                        fontSize: 16, fontWeight: FontWeight.w600, color: npdBlack,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                      decoration: BoxDecoration(
+                                        color: Colors.green.shade100,
+                                        borderRadius: BorderRadius.circular(12),
+                                      ),
+                                      child: Text(
+                                        cert['state'] == 'done' ? 'เสร็จสิ้น' : cert['state'] ?? '',
+                                        style: GoogleFonts.ibmPlexSansThai(
+                                          fontSize: 11, fontWeight: FontWeight.w500, color: Colors.green.shade800,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              // Detail rows
+                              Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Column(
+                                  children: [
+                                    _buildWtInfoRow('เลขที่', cert['name'] ?? '-'),
+                                    _buildWtInfoRow('บริษัท', cert['company_name'] ?? '-'),
+                                    _buildWtInfoRow('เลขผู้เสียภาษี', cert['employee_taxid'] ?? '-'),
+                                    const Divider(),
+                                    _buildWtInfoRow('รายได้รวม', '${formatMoney(totalBase)} บาท', bold: true),
+                                    _buildWtInfoRow('ภาษีหัก ณ ที่จ่าย', '${formatMoney(totalTax)} บาท', bold: true, isRed: true),
+                                    _buildWtInfoRow('เงินสุทธิรวมทั้งปี', '${formatMoney(cert['total_net_salary'])} บาท', bold: true),
+                                    const SizedBox(height: 12),
+                                    // Download PDF button
+                                    SizedBox(
+                                      width: double.infinity,
+                                      child: ElevatedButton.icon(
+                                        onPressed: () => _downloadWtCertPdf(cert['id'], cert['report_year'] ?? ''),
+                                        icon: const Icon(Icons.picture_as_pdf_rounded, size: 20),
+                                        label: Text('ดาวน์โหลด PDF ทวิ50', style: GoogleFonts.ibmPlexSansThai(fontWeight: FontWeight.w600)),
+                                        style: ElevatedButton.styleFrom(
+                                          backgroundColor: npdYellow,
+                                          foregroundColor: npdBlack,
+                                          padding: const EdgeInsets.symmetric(vertical: 12),
+                                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildWtInfoRow(String label, String value, {bool bold = false, bool isRed = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 130,
+            child: Text(
+              label,
+              style: GoogleFonts.ibmPlexSansThai(fontSize: 13, color: Colors.grey.shade600),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: GoogleFonts.ibmPlexSansThai(
+                fontSize: 13,
+                fontWeight: bold ? FontWeight.w600 : FontWeight.normal,
+                color: isRed ? Colors.red.shade700 : const Color(0xFF1A1A1A),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _downloadWtCertPdf(dynamic certId, String year) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Center(child: CircularProgressIndicator(color: Theme.of(context).colorScheme.primary)),
+    );
+
+    try {
+      final odoo = OdooRpcService();
+      final pdfBytes = await odoo.getWtCertPdfBytes(certId is int ? certId : int.parse(certId.toString()));
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+
+      if (pdfBytes != null) {
+        final dir = await getTemporaryDirectory();
+        final filename = 'WT_Cert_$year.pdf';
+        final filePath = '${dir.path}/$filename';
+        final file = File(filePath);
+        await file.writeAsBytes(pdfBytes);
+
+        final result = await OpenFilex.open(filePath);
+        if (result.type != ResultType.done) {
+          if (mounted) _showErrorSnackbar(context, 'ไม่สามารถเปิดไฟล์ PDF ได้: ${result.message}');
+        }
+      } else {
+        if (mounted) _showErrorSnackbar(context, 'ไม่สามารถสร้าง PDF ได้');
+      }
+    } on TimeoutException {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      _showErrorSnackbar(context, 'การดาวน์โหลดหมดเวลา');
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      _showErrorSnackbar(context, 'เกิดข้อผิดพลาด: $e');
+    }
+  }
+
+  void _showErrorSnackbar(BuildContext context, String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message, style: GoogleFonts.ibmPlexSansThai()),
+        backgroundColor: Colors.red,
+      ),
+    );
+  }
+
+  void _showEmployeeDataDialog(BuildContext context, Map<String, dynamic> emp) {
+    final Color npdYellow = Theme.of(context).colorScheme.primary;
+    const Color npdBlack = Color(0xFF1A1A1A);
+
+    String formatMoney(dynamic value) {
+      final num v = (value is num) ? value : double.tryParse(value.toString()) ?? 0;
+      return v.toStringAsFixed(2).replaceAllMapped(
+        RegExp(r'(\d{1,3})(?=(\d{3})+(?!\d))'),
+        (m) => '${m[1]},',
+      );
+    }
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.85,
+          maxChildSize: 0.95,
+          minChildSize: 0.5,
+          builder: (_, scrollController) {
+            return Container(
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.only(
+                  topLeft: Radius.circular(28),
+                  topRight: Radius.circular(28),
+                ),
+              ),
+              child: Column(
+                children: [
+                  // Handle bar
+                  Container(
+                    margin: const EdgeInsets.only(top: 12),
+                    width: 40,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  // Header
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    child: Row(
+                      children: [
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: npdYellow,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: const Icon(Icons.person_rounded, size: 28, color: npdBlack),
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '${emp['prefix_th'] ?? ''} ${emp['firstname'] ?? ''} ${emp['lastname'] ?? ''}',
+                                style: GoogleFonts.ibmPlexSansThai(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w600,
+                                  color: npdBlack,
+                                ),
+                              ),
+                              Text(
+                                'รหัส: ${emp['employee_code'] ?? '-'}',
+                                style: GoogleFonts.ibmPlexSansThai(
+                                  fontSize: 13,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Divider(height: 1),
+                  // Content
+                  Expanded(
+                    child: ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.all(20),
+                      children: [
+                        // 🔔 ใบเตือนพนักงาน (แสดงด้านบนสุด)
+                        _buildSectionHeader(
+                            'ใบเตือน', Icons.warning_amber_rounded),
+                        const SizedBox(height: 12),
+                        if (_warningCount > 0)
+                          _buildWarningAlertCard(ctx, _warningCount)
+                        else
+                          Container(
+                            padding: const EdgeInsets.all(14),
+                            decoration: BoxDecoration(
+                              color: Colors.green.shade50,
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: Colors.green.shade200),
+                            ),
+                            child: Row(
+                              children: [
+                                Icon(Icons.check_circle_rounded,
+                                    color: Colors.green.shade600),
+                                const SizedBox(width: 10),
+                                Text('ไม่มีใบเตือน',
+                                    style: GoogleFonts.ibmPlexSansThai(
+                                        color: Colors.green.shade800,
+                                        fontWeight: FontWeight.w600)),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 24),
+
+                        // ข้อมูลองค์กร
+                        _buildSectionHeader('ข้อมูลองค์กร', Icons.business_rounded),
+                        const SizedBox(height: 12),
+                        _buildInfoRow('แผนก', emp['department']),
+                        _buildInfoRow('ตำแหน่ง', emp['position']),
+                        _buildInfoRow('บริษัท', emp['company']),
+                        _buildInfoRow('สาขา', emp['branch']),
+                        _buildInfoRow('ประเภทพนักงาน', emp['employee_type']),
+
+                        const SizedBox(height: 24),
+                        _buildSectionHeader('ข้อมูลค่าตอบแทน', Icons.payments_rounded),
+                        const SizedBox(height: 12),
+                        _buildInfoRow('ค่าจ้าง', '${formatMoney(emp['salary'])} บาท', highlight: true),
+                        _buildInfoRow('เงินค่าครองชีพ', '${formatMoney(emp['cost_of_living'])} บาท'),
+                        _buildInfoRow('เงินประจำตำแหน่ง', '${formatMoney(emp['position_allowance'])} บาท'),
+                        _buildInfoRow('เงินค่าประสบการณ์', '${formatMoney(emp['experience_allowance'])} บาท'),
+                        _buildInfoRow('เงินค่าวิชาชีพ', '${formatMoney(emp['professional_fee'])} บาท'),
+                        _buildInfoRow('เงินเบิกล่วงหน้า', emp['advance_amount']),
+                        _buildInfoRow('วงเงินเบิกล่วงหน้า', '${formatMoney(emp['advance_limit'])} บาท'),
+
+                        const SizedBox(height: 24),
+                        _buildSectionHeader('ข้อมูลส่วนตัว', Icons.badge_rounded),
+                        const SizedBox(height: 12),
+                        _buildInfoRow('ชื่อเล่น', emp['nickname']),
+                        _buildInfoRow('ชื่อ (ENG)', emp['firstname_eng']),
+                        _buildInfoRow('นามสกุล (ENG)', emp['lastname_eng']),
+                        _buildInfoRow('เพศ', emp['gender']),
+                        _buildInfoRow('สัญชาติ', emp['nationality']),
+                        _buildInfoRow('สถานะ', emp['marital_status']),
+                        _buildInfoRow('วันเกิด', emp['birthdate']),
+                        _buildInfoRow('อายุ', emp['age'] != null && emp['age'] != 0 ? '${emp['age']} ปี' : ''),
+                        _buildInfoRow('เบอร์โทร', emp['phone_number']),
+                        _buildInfoRow('อีเมล', emp['email']),
+                        _buildInfoRow('เลขประจำตัวประชาชน', emp['id_card_number']),
+                        _buildInfoRow('เลขที่หนังสือเดินทาง', emp['passport_number']),
+                        _buildInfoRow('ประกันสังคม', emp['social_security_number']),
+
+                        const SizedBox(height: 24),
+                        _buildSectionHeader('ที่อยู่', Icons.home_rounded),
+                        const SizedBox(height: 12),
+                        _buildInfoRow('ที่อยู่', emp['address']),
+
+                        const SizedBox(height: 24),
+                        _buildSectionHeader('ข้อมูลการทำงาน', Icons.work_rounded),
+                        const SizedBox(height: 12),
+                        _buildInfoRow('วันที่เริ่มงาน', emp['start_date']),
+
+                        const SizedBox(height: 40),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  /// การ์ดแจ้งเตือนใบเตือน พร้อมปุ่มเปิดหน้าใบเตือน
+  Widget _buildWarningAlertCard(BuildContext dialogCtx, int count) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: Colors.red.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.red.shade200, width: 1.5),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade600,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: const Icon(Icons.warning_amber_rounded,
+                    color: Colors.white, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'คุณมีใบเตือนในระบบ',
+                      style: GoogleFonts.ibmPlexSansThai(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: Colors.red.shade800),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      'จำนวน $count รายการ',
+                      style: GoogleFonts.ibmPlexSansThai(
+                          fontSize: 13, color: Colors.red.shade700),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton.icon(
+              onPressed: () async {
+                Navigator.pop(dialogCtx);
+                // ✅ เมื่อเปิดหน้าใบเตือน ให้ mark ว่าอ่านแล้ว + ยกเลิกแจ้งเตือน
+                await _markWarningsAsRead();
+                if (!mounted) return;
+                await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => EmployeeWarningScreen(
+                      employeeCode: widget.user.employeeCode ?? '',
+                    ),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+              label: Text(
+                'ดูรายละเอียดใบเตือน',
+                style:
+                    GoogleFonts.ibmPlexSansThai(fontWeight: FontWeight.w600),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red.shade600,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 12),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionHeader(String title, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: Theme.of(context).colorScheme.primary),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: GoogleFonts.ibmPlexSansThai(
+            fontSize: 16,
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF1A1A1A),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildInfoRow(String label, dynamic value, {bool highlight = false}) {
+    final displayValue = (value == null || value.toString().isEmpty) ? '-' : value.toString();
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 140,
+            child: Text(
+              label,
+              style: GoogleFonts.ibmPlexSansThai(
+                fontSize: 14,
+                color: Colors.grey.shade600,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              displayValue,
+              style: GoogleFonts.ibmPlexSansThai(
+                fontSize: 14,
+                fontWeight: highlight ? FontWeight.w600 : FontWeight.w500,
+                color: highlight ? const Color(0xFF1A1A1A) : const Color(0xFF333333),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -1636,8 +3303,10 @@ class _HomePageState extends State<HomePage> {
           children: [
             Expanded(
               child: _MenuCardItem(
-                icon: Icons.receipt_long_outlined,
+                icon: Icons.account_balance_wallet_rounded,
                 label: 'สลิปเงินเดือน',
+                iconBgColor: const Color(0xFFE3F2FD),
+                iconColor: const Color(0xFF1565C0),
                 onTap: () {
                   final mainAppScreenState =
                       context.findAncestorStateOfType<_MainAppScreenState>();
@@ -1690,7 +3359,7 @@ class _HomePageState extends State<HomePage> {
       children: [
         Text(
           'สำหรับผู้อนุมัติ',
-          style: GoogleFonts.kanit(fontSize: 17, fontWeight: FontWeight.w500),
+          style: GoogleFonts.ibmPlexSansThai(fontSize: 17, fontWeight: FontWeight.w500),
         ),
         const SizedBox(height: 16),
         Row(
@@ -1701,6 +3370,8 @@ class _HomePageState extends State<HomePage> {
                 count: leaveCount,
                 icon: Icons.playlist_add_check_circle_outlined,
                 onTap: () {
+                  // 🔔 mark as seen + ยกเลิกแจ้งเตือน
+                  markApproverLeaveAsSeen();
                   final mainAppScreenState =
                       context.findAncestorStateOfType<_MainAppScreenState>();
                   if (mainAppScreenState != null) {
@@ -1731,6 +3402,8 @@ class _HomePageState extends State<HomePage> {
                 count: addTimeCount,
                 icon: Icons.person_add_alt_1_outlined,
                 onTap: () {
+                  // 🔔 mark as seen + ยกเลิกแจ้งเตือน
+                  markApproverAddTimeAsSeen();
                   final mainAppScreenState =
                       context.findAncestorStateOfType<_MainAppScreenState>();
                   if (mainAppScreenState != null) {
@@ -1770,7 +3443,7 @@ class _HomePageState extends State<HomePage> {
         child: Center(
           child: Text(
             'ไม่มีข้อมูลการลงเวลา',
-            style: GoogleFonts.kanit(fontSize: 15, color: Colors.grey.shade600),
+            style: GoogleFonts.ibmPlexSansThai(fontSize: 15, color: Colors.grey.shade600),
           ),
         ),
       );
@@ -1865,7 +3538,7 @@ class _HomePageState extends State<HomePage> {
                 // Display the date (e.g., "24 กรกฎาคม 2025")
                 Text(
                   _formatDateForHistory(currentDate),
-                  style: GoogleFonts.kanit(
+                  style: GoogleFonts.ibmPlexSansThai(
                     fontWeight: FontWeight.bold,
                     fontSize: 18,
                     color: Theme.of(context).colorScheme.primary,
@@ -1888,44 +3561,95 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-// ✅ New widget for rectangular menu items
+// ✅ เมนูการ์ดแบบทันสมัย - ไอคอนสีต่างกันแต่ละเมนู
 class _MenuCardItem extends StatelessWidget {
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final Color iconBgColor;
+  final Color iconColor;
+  final int badgeCount;
 
   const _MenuCardItem({
     required this.icon,
     required this.label,
     required this.onTap,
+    required this.iconBgColor,
+    required this.iconColor,
+    this.badgeCount = 0,
   });
 
   @override
   Widget build(BuildContext context) {
-    final Color primaryColor = Theme.of(context).colorScheme.primary;
-    final Color npdOrange = Theme.of(context).colorScheme.primaryContainer;
-    final Color onSurfaceColor = Theme.of(context).colorScheme.onSurface;
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(15), // Rounded corners for the card
-      child: Card(
-        elevation: 4, // Add elevation for a card-like appearance
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        splashColor: iconBgColor.withOpacity(0.3),
         child: Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 16),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: Colors.grey.shade100, width: 1),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.04),
+                blurRadius: 16,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, size: 40, color: npdOrange), // Slightly smaller icon
-              const SizedBox(height: 12), // More spacing
+              Stack(
+                clipBehavior: Clip.none,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: iconBgColor,
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                    child: Icon(icon, size: 28, color: iconColor),
+                  ),
+                  if (badgeCount > 0)
+                    Positioned(
+                      right: -6,
+                      top: -6,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 3),
+                        constraints: const BoxConstraints(
+                            minWidth: 22, minHeight: 22),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade600,
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: Colors.white, width: 2),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(
+                          badgeCount > 99 ? '99+' : '$badgeCount',
+                          style: GoogleFonts.ibmPlexSansThai(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
               Text(
                 label,
                 textAlign: TextAlign.center,
-                style: GoogleFonts.kanit(
-                  fontSize: 16, // Larger font size
+                style: GoogleFonts.ibmPlexSansThai(
+                  fontSize: 14,
                   fontWeight: FontWeight.w500,
-                  color: onSurfaceColor,
+                  color: const Color(0xFF1A1A1A),
                 ),
               ),
             ],
@@ -1936,7 +3660,7 @@ class _MenuCardItem extends StatelessWidget {
   }
 }
 
-// Widget for approval cards
+// Widget for approval cards - ธีมเหลือง gradient
 class _ApprovalCard extends StatelessWidget {
   final String label;
   final int count;
@@ -1952,64 +3676,81 @@ class _ApprovalCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color primaryColor = Theme.of(context).colorScheme.primary;
-    final Color npdOrange = Theme.of(context).colorScheme.primaryContainer;
-    final Color onSurfaceColor = Theme.of(context).colorScheme.onSurface;
+    // ✅ ใช้สีจาก Theme — onPrimary ดำเฉพาะธีมเหลืองเดิม, สีอื่น = ขาว
+    final Color npdYellow = Theme.of(context).colorScheme.primary;
+    final Color npdBlack = Theme.of(context).colorScheme.onPrimary;
 
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(15),
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          color: Theme.of(context).colorScheme.surface,
-          borderRadius: BorderRadius.circular(15),
-          boxShadow: [
-            BoxShadow(
-              color: primaryColor.withOpacity(0.1),
-              blurRadius: 10,
-              offset: const Offset(0, 5),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            gradient: LinearGradient(
+              colors: [
+                npdYellow,
+                Color.lerp(npdYellow, Colors.white, 0.4) ?? npdYellow,
+              ],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
             ),
-          ],
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Icon(icon, size: 36, color: npdOrange),
-                if (count > 0)
+            borderRadius: BorderRadius.circular(18),
+            boxShadow: [
+              BoxShadow(
+                color: npdYellow.withOpacity(0.3),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
                   Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
+                    padding: const EdgeInsets.all(10),
                     decoration: BoxDecoration(
-                      color: Colors.redAccent,
-                      borderRadius: BorderRadius.circular(20),
+                      color: Colors.white.withOpacity(0.5),
+                      borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Text(
-                      count.toString(),
-                      style: GoogleFonts.kanit(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w500,
-                        fontSize: 14,
+                    child: Icon(icon, size: 28, color: npdBlack),
+                  ),
+                  if (count > 0)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: Text(
+                        count.toString(),
+                        style: GoogleFonts.ibmPlexSansThai(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 13,
+                        ),
                       ),
                     ),
-                  ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            Text(
-              label,
-              style: GoogleFonts.kanit(
-                fontSize: 15,
-                fontWeight: FontWeight.w500,
-                color: onSurfaceColor,
+                ],
               ),
-            ),
-          ],
+              const SizedBox(height: 14),
+              Text(
+                label,
+                style: GoogleFonts.ibmPlexSansThai(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w600,
+                  color: npdBlack,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -2054,18 +3795,23 @@ class _RealTimeClockState extends State<RealTimeClock> {
 
   @override
   Widget build(BuildContext context) {
-    final Color primaryColor = Theme.of(context).colorScheme.primary;
-    final Color onSurfaceColor = Theme.of(context).colorScheme.onSurface;
+    // ✅ ใช้สีจาก Theme — onPrimary ดำเฉพาะธีมเหลืองเดิม, สีอื่น = ขาว
+    final Color npdYellow = Theme.of(context).colorScheme.primary;
+    final Color npdBlack = Theme.of(context).colorScheme.onPrimary;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(15),
+        gradient: LinearGradient(
+          colors: [npdYellow, npdYellow.withOpacity(0.7)],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: [
           BoxShadow(
-            color: primaryColor.withOpacity(0.08),
-            blurRadius: 10,
+            color: npdYellow.withOpacity(0.25),
+            blurRadius: 12,
             offset: const Offset(0, 4),
           ),
         ],
@@ -2073,15 +3819,15 @@ class _RealTimeClockState extends State<RealTimeClock> {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.access_time_filled_rounded, color: primaryColor, size: 22),
+          Icon(Icons.schedule_rounded, color: npdBlack, size: 20),
           const SizedBox(width: 10),
           Flexible(
             child: Text(
               _formattedDateTime,
-              style: GoogleFonts.kanit(
+              style: GoogleFonts.ibmPlexSansThai(
                 fontSize: 14,
-                fontWeight: FontWeight.w500,
-                color: onSurfaceColor,
+                fontWeight: FontWeight.w600,
+                color: npdBlack,
               ),
               overflow: TextOverflow.ellipsis,
             ),
@@ -2113,7 +3859,7 @@ class PlaceholderPage extends StatelessWidget {
           const SizedBox(height: 20),
           Text(
             'หน้า $title',
-            style: GoogleFonts.kanit(
+            style: GoogleFonts.ibmPlexSansThai(
               fontSize: 22,
               color: onBackground,
               fontWeight: FontWeight.w500,
@@ -2121,7 +3867,7 @@ class PlaceholderPage extends StatelessWidget {
           ),
           Text(
             'กำลังอยู่ในระหว่างการพัฒนา',
-            style: GoogleFonts.kanit(fontSize: 15, color: Colors.grey.shade500),
+            style: GoogleFonts.ibmPlexSansThai(fontSize: 15, color: Colors.grey.shade500),
           ),
         ],
       ),
@@ -2143,9 +3889,7 @@ class _CheckInOutPairCard extends StatelessWidget {
   Widget build(BuildContext context) {
     Color cardColor;
     if (inTime != null && outTime != null) {
-      cardColor = Colors.blue.shade50.withOpacity(
-        0.5,
-      );
+      cardColor = Theme.of(context).colorScheme.primary.withOpacity(0.12);
     } else if (inTime != null) {
       cardColor = Colors.green.shade50.withOpacity(0.5);
     } else if (outTime != null) {
@@ -2223,7 +3967,7 @@ class _TimeEntryBubble extends StatelessWidget {
         Flexible(
           child: Text(
             '$label: $time น.',
-            style: GoogleFonts.kanit(
+            style: GoogleFonts.ibmPlexSansThai(
               fontSize: 13,
               fontWeight: FontWeight.w500,
               color: textColor,
@@ -2330,7 +4074,7 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('ประวัติการลงเวลาทั้งหมด', style: GoogleFonts.kanit()),
+        title: Text('ประวัติการลงเวลาทั้งหมด', style: GoogleFonts.ibmPlexSansThai()),
         actions: [
           IconButton(
             icon: const Icon(Icons.refresh),
@@ -2358,7 +4102,7 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
                       child: DropdownButton<int>(
                         value: _selectedMonth,
                         isExpanded: true,
-                        style: GoogleFonts.kanit(fontSize: 14, color: Colors.black),
+                        style: GoogleFonts.ibmPlexSansThai(fontSize: 14, color: Colors.black),
                         items: List.generate(12, (index) {
                           return DropdownMenuItem(
                             value: index + 1,
@@ -2386,7 +4130,7 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
                   child: DropdownButtonHideUnderline(
                     child: DropdownButton<int>(
                       value: _selectedYear,
-                      style: GoogleFonts.kanit(fontSize: 14, color: Colors.black),
+                      style: GoogleFonts.ibmPlexSansThai(fontSize: 14, color: Colors.black),
                       items: List.generate(5, (index) {
                         int year = DateTime.now().year - 2 + index;
                         return DropdownMenuItem(
@@ -2413,7 +4157,7 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
               children: [
                 Text(
                   'พบ ${_checkinHistory.length} รายการ',
-                  style: GoogleFonts.kanit(fontSize: 14, color: Colors.grey.shade600),
+                  style: GoogleFonts.ibmPlexSansThai(fontSize: 14, color: Colors.grey.shade600),
                 ),
               ],
             ),
@@ -2429,12 +4173,12 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text(_errorMessage, style: GoogleFonts.kanit(color: Colors.red)),
+                            Text(_errorMessage, style: GoogleFonts.ibmPlexSansThai(color: Colors.red)),
                             const SizedBox(height: 16),
                             ElevatedButton.icon(
                               onPressed: _fetchCheckinHistory,
                               icon: const Icon(Icons.refresh),
-                              label: Text('ลองอีกครั้ง', style: GoogleFonts.kanit()),
+                              label: Text('ลองอีกครั้ง', style: GoogleFonts.ibmPlexSansThai()),
                             ),
                           ],
                         ),
@@ -2443,7 +4187,7 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
                         ? Center(
                             child: Text(
                               'ไม่มีข้อมูลการลงเวลาในเดือนนี้',
-                              style: GoogleFonts.kanit(fontSize: 16, color: Colors.grey),
+                              style: GoogleFonts.ibmPlexSansThai(fontSize: 16, color: Colors.grey),
                             ),
                           )
                         : RefreshIndicator(
@@ -2513,7 +4257,7 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
                 // Date Header
                 Text(
                   _formatDate(date),
-                  style: GoogleFonts.kanit(
+                  style: GoogleFonts.ibmPlexSansThai(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
                     color: Theme.of(context).colorScheme.primary,

@@ -15,6 +15,7 @@ class ApproveAddTimeLog {
   final TimeOfDay checkoutTime;
   final String department;
   final String position;
+  final String? branch; // ✅ สาขาของผู้ขอ (จาก users.branch)
   final String state;
   final DateTime? createdAt;
   final String? reason;
@@ -24,6 +25,8 @@ class ApproveAddTimeLog {
   final String? approverFirstname;
   final String? approverLastname;
   final String? reasonType;
+  final String? allowanceType;
+  final String? amount;
   final String? filePath;
 
   ApproveAddTimeLog({
@@ -37,6 +40,7 @@ class ApproveAddTimeLog {
     required this.checkoutTime,
     required this.department,
     required this.position,
+    this.branch,
     required this.state,
     this.createdAt,
     this.reason,
@@ -46,6 +50,8 @@ class ApproveAddTimeLog {
     this.approverFirstname,
     this.approverLastname,
     this.reasonType,
+    this.allowanceType,
+    this.amount,
     this.filePath,
   });
 
@@ -72,6 +78,9 @@ class ApproveAddTimeLog {
       checkoutTime: parseTime(json['checkout_time']),
       department: json['department'] ?? '', // Assume not null, or make nullable
       position: json['position'] ?? '', // Assume not null, or make nullable
+      branch: json['branch'] == 'NULL' || json['branch'] == null
+          ? null
+          : json['branch'],
       state: json['state'],
       createdAt: json['created_at'] != null &&
               json['created_at'] != '0000-00-00 00:00:00'
@@ -84,6 +93,17 @@ class ApproveAddTimeLog {
       reasonType: json['reason_type'] == 'NULL' || json['reason_type'] == null
           ? null
           : json['reason_type'],
+
+      allowanceType: json['allowance_type'] == 'NULL' ||
+              json['allowance_type'] == null ||
+              (json['allowance_type'] is String &&
+                  (json['allowance_type'] as String).isEmpty)
+          ? null
+          : json['allowance_type'].toString(),
+
+      amount: json['amount'] == null || json['amount'] == 'NULL' || json['amount'] == '0' || json['amount'] == '0.00'
+          ? null
+          : json['amount'].toString(),
 
       userNote: json['user_note'] == 'NULL' ||
               json['user_note'] == null // <<< เพิ่มการ mapping จาก JSON
@@ -129,11 +149,14 @@ class ApproveAddTimeLog {
       'checkout_time': formatTimeOfDay(checkoutTime),
       'department': department,
       'position': position,
+      'branch': branch,
       'state': state,
       'created_at': createdAt?.toIso8601String(),
       'reason': reason,
       'user_note': userNote, // <<< เพิ่มการแปลง JSON
       'reason_type': reasonType,
+      'allowance_type': allowanceType,
+      'amount': amount,
       'approved_at': approvedAt?.toIso8601String(),
       'approved_by': approvedBy,
       'approver_firstname': approverFirstname,

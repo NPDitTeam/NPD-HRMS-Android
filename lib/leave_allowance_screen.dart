@@ -73,26 +73,36 @@ class _LeaveAllowanceScreenState extends State<LeaveAllowanceScreen> {
   }
 
   // Widget สำหรับแสดงรายการสิทธิ์การลาในรูปแบบหลอด
-  Widget _buildAllowanceListTile(String label, int? used, int? total) {
+  // หมายเหตุ: parameter ที่สอง (remaining) คือจำนวนวันที่ "เหลือ" (ไม่ใช่ที่ใช้ไป)
+  Widget _buildAllowanceListTile(String label, int? remaining, int? total) {
+    // ✅ progress = สัดส่วนของวันที่ "เหลืออยู่"
+    //   1.0 = เต็ม (ยังไม่เคยใช้)
+    //   0.0 = หมดแล้ว
     double progress = 0.0;
-    Color progressColor = Colors.grey; // ตั้งค่าเริ่มต้นเป็นสีเทา
+    Color progressColor = Colors.grey;
 
-    if (total != null && total > 0 && used != null) {
-      progress = used / total;
+    if (total != null && total > 0 && remaining != null) {
+      // คลีนค่า: ป้องกัน remaining ติดลบ หรือ > total
+      final r = remaining.clamp(0, total);
+      progress = r / total;
 
-      if (progress >= 1.0) {
-        progress = 1.0;
-        progressColor = Colors.blue; // หมดสิทธิ์แล้วเป็นสีฟ้า
-      } else if (progress > 0.75) {
-        progressColor = Colors.red; // ใกล้หมดสิทธิ์แล้ว (> 75%)
-      } else if (progress > 0) {
-        progressColor = Colors.amber; // ใช้ไปแล้วบางส่วนเป็นสีเหลือง
+      if (r <= 0) {
+        // 🔘 หมดแล้ว → สีเทา
+        progressColor = Colors.grey;
+      } else if (r >= total) {
+        // 🟢 เต็ม (ยังไม่เคยใช้) → สีเขียว
+        progressColor = Colors.green;
+      } else if (progress <= 0.25) {
+        // 🔴 ใกล้หมด (เหลือ ≤ 25%) → สีแดง
+        progressColor = Colors.red;
       } else {
-        progressColor = Colors.grey; // ยังไม่ได้ใช้เลยเป็นสีเทา
+        // 🟡 ใช้ไปแล้วบางส่วน → สีเหลือง
+        progressColor = Colors.amber;
       }
-    } else if (used != null && used > 0) {
-      progress = 1.0;
-      progressColor = Colors.blue; // กรณี total เป็น 0 แต่ used > 0
+    } else if ((total ?? 0) == 0) {
+      // ไม่มีสิทธิ์ตั้งแต่แรก (total = 0)
+      progress = 0.0;
+      progressColor = Colors.grey;
     }
 
     return Padding(
@@ -102,7 +112,7 @@ class _LeaveAllowanceScreenState extends State<LeaveAllowanceScreen> {
         children: [
           Text(
             label,
-            style: GoogleFonts.kanit(
+            style: GoogleFonts.ibmPlexSansThai(
                 fontSize: 16,
                 fontWeight: FontWeight.w500,
                 color: Colors.grey.shade800),
@@ -121,8 +131,8 @@ class _LeaveAllowanceScreenState extends State<LeaveAllowanceScreen> {
               ),
               const SizedBox(width: 10),
               Text(
-                'คงเหลือ: ${used ?? 0} / ทั้งหมด: ${total ?? 0}',
-                style: GoogleFonts.kanit(
+                'คงเหลือ: ${remaining ?? 0} / ทั้งหมด: ${total ?? 0}',
+                style: GoogleFonts.ibmPlexSansThai(
                     fontSize: 14, color: Colors.grey.shade600),
               ),
             ],
@@ -136,7 +146,7 @@ class _LeaveAllowanceScreenState extends State<LeaveAllowanceScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('สิทธิ์การลา', style: GoogleFonts.kanit()),
+        title: Text('สิทธิ์การลา', style: GoogleFonts.ibmPlexSansThai()),
       ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -146,7 +156,7 @@ class _LeaveAllowanceScreenState extends State<LeaveAllowanceScreen> {
                     padding: const EdgeInsets.all(16.0),
                     child: Text(
                       _errorMessage!,
-                      style: GoogleFonts.kanit(color: Colors.red),
+                      style: GoogleFonts.ibmPlexSansThai(color: Colors.red),
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -170,8 +180,8 @@ class _LeaveAllowanceScreenState extends State<LeaveAllowanceScreen> {
                               padding:
                                   const EdgeInsets.symmetric(vertical: 10.0),
                               child: Text(
-                                'สรุปสิทธิ์การลาคงเหลือ 🏝️',
-                                style: GoogleFonts.kanit(
+                                'สรุปสิทธิ์การลาคงเหลือ',
+                                style: GoogleFonts.ibmPlexSansThai(
                                     fontSize: 18, fontWeight: FontWeight.bold),
                               ),
                             ),

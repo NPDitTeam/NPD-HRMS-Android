@@ -22,6 +22,7 @@ class LeaveLog {
   final DateTime? createdAt;
   final String? department;
   final String? position;
+  final String? branch; // ✅ สาขาของผู้ขอ (จาก users.branch)
 
   // These fields are for the requestor's first and last name, as returned by the API
   final String? requesterFirstname;
@@ -47,6 +48,7 @@ class LeaveLog {
     this.createdAt,
     this.department,
     this.position,
+    this.branch,
     this.requesterFirstname,
     this.requesterLastname,
   });
@@ -100,6 +102,9 @@ class LeaveLog {
       position: json['position'] == 'NULL' || json['position'] == null
           ? null
           : json['position'],
+      branch: json['branch'] == 'NULL' || json['branch'] == null
+          ? null
+          : json['branch'],
       requesterFirstname:
           json['firstname'] == 'NULL' || json['firstname'] == null
               ? null
@@ -138,6 +143,7 @@ class LeaveLog {
       'created_at': createdAt?.toIso8601String(),
       'department': department,
       'position': position,
+      'branch': branch,
       'firstname': requesterFirstname,
       'lastname': requesterLastname,
     };

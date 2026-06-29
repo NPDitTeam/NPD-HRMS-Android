@@ -9,6 +9,7 @@ import 'package:photo_view/photo_view.dart';
 
 import 'main.dart' show User;
 import 'models/leave_log.dart';
+import 'widgets/expandable_history_card.dart';
 
 // --- Global Helper Functions (can stay global as they have no dependency on State/Context) ---
 String _formatTimeOfDayToString(TimeOfDay tod) {
@@ -420,7 +421,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
       context: context,
       builder: (BuildContext dialogContext) {
         return AlertDialog(
-          title: Text('ไม่อนุมัติคำขอลา', style: GoogleFonts.kanit()),
+          title: Text('ไม่อนุมัติคำขอลา', style: GoogleFonts.ibmPlexSansThai()),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -429,7 +430,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                   controller: reasonController,
                   decoration: InputDecoration(
                     labelText: 'เหตุผลในการไม่อนุมัติ',
-                    labelStyle: GoogleFonts.kanit(),
+                    labelStyle: GoogleFonts.ibmPlexSansThai(),
                     border: const OutlineInputBorder(),
                   ),
                   maxLines: 3,
@@ -440,14 +441,14 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
           actions: <Widget>[
             TextButton(
               child: Text('ยกเลิก',
-                  style: GoogleFonts.kanit(color: Colors.grey.shade700)),
+                  style: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade700)),
               onPressed: () {
                 Navigator.of(dialogContext).pop();
               },
             ),
             ElevatedButton(
               child: Text('ยืนยันไม่อนุมัติ',
-                  style: GoogleFonts.kanit(color: Colors.white)),
+                  style: GoogleFonts.ibmPlexSansThai(color: Colors.white)),
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () {
                 Navigator.of(dialogContext).pop();
@@ -472,7 +473,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setStateDialog) {
             return AlertDialog(
-              title: Text('แก้ไขสถานะคำขอลา', style: GoogleFonts.kanit()),
+              title: Text('แก้ไขสถานะคำขอลา', style: GoogleFonts.ibmPlexSansThai()),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -481,14 +482,14 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                       value: selectedState,
                       decoration: InputDecoration(
                         labelText: 'สถานะใหม่',
-                        labelStyle: GoogleFonts.kanit(),
+                        labelStyle: GoogleFonts.ibmPlexSansThai(),
                         border: const OutlineInputBorder(),
                       ),
                       items: <String>['รออนุมัติ', 'อนุมัติ', 'ไม่อนุมัติ']
                           .map<DropdownMenuItem<String>>((String value) {
                         return DropdownMenuItem<String>(
                           value: value,
-                          child: Text(value, style: GoogleFonts.kanit()),
+                          child: Text(value, style: GoogleFonts.ibmPlexSansThai()),
                         );
                       }).toList(),
                       onChanged: (String? newValue) {
@@ -504,7 +505,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                       controller: reasonController,
                       decoration: InputDecoration(
                         labelText: 'เหตุผล (หากมีการเปลี่ยนแปลงสถานะหรือแก้ไข)',
-                        labelStyle: GoogleFonts.kanit(),
+                        labelStyle: GoogleFonts.ibmPlexSansThai(),
                         border: const OutlineInputBorder(),
                       ),
                       maxLines: 3,
@@ -515,14 +516,14 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
               actions: <Widget>[
                 TextButton(
                   child: Text('ยกเลิก',
-                      style: GoogleFonts.kanit(color: Colors.grey.shade700)),
+                      style: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade700)),
                   onPressed: () {
                     Navigator.of(dialogContext).pop();
                   },
                 ),
                 ElevatedButton(
                   child: Text('บันทึกการแก้ไข',
-                      style: GoogleFonts.kanit(color: Colors.white)),
+                      style: GoogleFonts.ibmPlexSansThai(color: Colors.white)),
                   style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.orange.shade700),
                   onPressed: () {
@@ -549,12 +550,12 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
           SizedBox(
             width: 120,
             child: Text(label,
-                style: GoogleFonts.kanit(
+                style: GoogleFonts.ibmPlexSansThai(
                     fontWeight: FontWeight.w500, color: Colors.grey.shade700)),
           ),
           Expanded(
             child: Text(value,
-                style: GoogleFonts.kanit(color: Colors.grey.shade800)),
+                style: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade800)),
           ),
         ],
       ),
@@ -567,7 +568,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
       context: context,
       builder: (BuildContext dialogContext) {
         return AlertDialog(
-          title: Text('รายละเอียดคำขอลา', style: GoogleFonts.kanit()),
+          title: Text('รายละเอียดคำขอลา', style: GoogleFonts.ibmPlexSansThai()),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -588,6 +589,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                 _buildInfoRowInDialog('หมายเหตุ:', request.note ?? '-'),
                 _buildInfoRowInDialog('แผนก:', request.department ?? '-'),
                 _buildInfoRowInDialog('ตำแหน่ง:', request.position ?? '-'),
+                _buildInfoRowInDialog('สาขา:', request.branch ?? '-'),
 
                 // File Attachment Link in Dialog
                 if (request.filePath != null && request.filePath!.isNotEmpty)
@@ -599,7 +601,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                         SizedBox(
                           width: 120,
                           child: Text('เอกสารแนบ:',
-                              style: GoogleFonts.kanit(
+                              style: GoogleFonts.ibmPlexSansThai(
                                   fontWeight: FontWeight.w500,
                                   color: Colors.grey.shade700)),
                         ),
@@ -609,11 +611,11 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                             icon: const Icon(Icons.image,
                                 size: 18), // Only image icon
                             label:
-                                Text('ดูไฟล์แนบ', style: GoogleFonts.kanit()),
+                                Text('ดูไฟล์แนบ', style: GoogleFonts.ibmPlexSansThai()),
                             style: TextButton.styleFrom(
                               padding: EdgeInsets.zero,
                               alignment: Alignment.centerLeft,
-                              foregroundColor: Colors.blue.shade700,
+                              foregroundColor: const Color(0xFF1A1A1A),
                             ),
                           ),
                         ),
@@ -643,7 +645,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
           actions: <Widget>[
             TextButton(
               child: Text('ปิด',
-                  style: GoogleFonts.kanit(color: Colors.grey.shade700)),
+                  style: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade700)),
               onPressed: () {
                 Navigator.of(dialogContext).pop();
               },
@@ -664,12 +666,12 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
           SizedBox(
             width: 120,
             child: Text(label,
-                style: GoogleFonts.kanit(
+                style: GoogleFonts.ibmPlexSansThai(
                     fontWeight: FontWeight.w500, color: Colors.grey.shade700)),
           ),
           Expanded(
             child: Text(value,
-                style: GoogleFonts.kanit(color: Colors.grey.shade800)),
+                style: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade800)),
           ),
         ],
       ),
@@ -684,7 +686,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
     final Color redColor = Colors.red; // Assuming red for disapprove
     final Color orangeColor =
         Colors.orange.shade700; // Assuming orange for edit
-    final Color blueColor = Colors.blue.shade700; // Assuming blue for details
+    final Color blueColor = const Color(0xFF1A1A1A); // Assuming blue for details
     final Color foregroundColor = Colors.white; // Text color on colored buttons
 
     // Inner helper function for creating uniform buttons for pending requests
@@ -699,7 +701,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
           onPressed: _isLoading ? null : onPressed,
           icon: Icon(icon, size: 18),
           label: Text(label,
-              style: GoogleFonts.kanit(
+              style: GoogleFonts.ibmPlexSansThai(
                   fontSize: 13,
                   fontWeight:
                       FontWeight.w500)), // Adjusted font size for better fit
@@ -756,7 +758,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                   // --- Pending Requests Section ---
                   Text(
                     'รายการคำขอลาที่รออนุมัติ',
-                    style: GoogleFonts.kanit(
+                    style: GoogleFonts.ibmPlexSansThai(
                         fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 16),
@@ -766,7 +768,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                             padding: const EdgeInsets.all(24.0),
                             child: Text(
                               'ยังไม่มีคำขอลาที่รออนุมัติ',
-                              style: GoogleFonts.kanit(
+                              style: GoogleFonts.ibmPlexSansThai(
                                   fontSize: 16, color: Colors.grey.shade600),
                             ),
                           ),
@@ -777,120 +779,85 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                           itemCount: _pendingRequests.length,
                           itemBuilder: (context, index) {
                             final request = _pendingRequests[index];
-                            return Card(
-                              margin: const EdgeInsets.symmetric(vertical: 8),
-                              elevation: 2,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: BorderSide(
-                                    color: _getStateBackgroundColor(
-                                        request.state)),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.all(16.0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text(
-                                          '${request.requesterFirstname ?? ''} ${request.requesterLastname ?? ''}',
-                                          style: GoogleFonts.kanit(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8, vertical: 4),
-                                          decoration: BoxDecoration(
-                                            color:
-                                                _getStateColor(request.state),
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                          ),
-                                          child: Text(
-                                            request.state,
-                                            style: GoogleFonts.kanit(
-                                                color: Colors.white,
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const Divider(height: 20, thickness: 1),
+                            final dateLabel = request.leaveStartDate ==
+                                    request.leaveEndDate
+                                ? _formatThaiDate(request.leaveStartDate)
+                                : '${_formatThaiDate(request.leaveStartDate)} - ${_formatThaiDate(request.leaveEndDate)}';
+                            final requesterName =
+                                '${request.requesterFirstname ?? ''} ${request.requesterLastname ?? ''}'
+                                    .trim();
+                            return ExpandableHistoryCard(
+                              leadingIcon: Icons.event_note_rounded,
+                              accentColor: _getStateColor(request.state),
+                              dateLabel: dateLabel,
+                              typeLabel: request.leaveType,
+                              status: request.state,
+                              statusColor: _getStateColor(request.state),
+                              subtitle: requesterName.isEmpty
+                                  ? null
+                                  : 'ผู้ขอ: $requesterName',
+                              initiallyExpanded: true,
+                              details: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildInfoRow('เวลา:',
+                                      '${_formatThaiTime(request.leaveStartTime)} - ${_formatThaiTime(request.leaveEndTime)}'),
+                                  if (request.note != null &&
+                                      request.note!.isNotEmpty)
                                     _buildInfoRow(
-                                        'ประเภทการลา:', request.leaveType),
+                                        'หมายเหตุ:', request.note!),
+                                  if (request.department != null &&
+                                      request.department!.isNotEmpty)
                                     _buildInfoRow(
-                                        'วันที่ลา:',
-                                        _formatThaiDate(
-                                                request.leaveStartDate) +
-                                            (request.leaveStartDate !=
-                                                    request.leaveEndDate
-                                                ? ' ถึง ${_formatThaiDate(request.leaveEndDate)}'
-                                                : '')),
-                                    _buildInfoRow('เวลา:',
-                                        '${_formatThaiTime(request.leaveStartTime)} - ${_formatThaiTime(request.leaveEndTime)}'),
-
-                                    if (request.note != null &&
-                                        request.note!.isNotEmpty)
-                                      _buildInfoRow('หมายเหตุ:', request.note!),
-                                    if (request.department != null &&
-                                        request.department!.isNotEmpty)
-                                      _buildInfoRow(
-                                          'แผนก:', request.department!),
-                                    if (request.position != null &&
-                                        request.position!.isNotEmpty)
-                                      _buildInfoRow(
-                                          'ตำแหน่ง:', request.position!),
-
-                                    // Redesigned Action Buttons Layout for Pending Requests
-                                    const SizedBox(height: 16),
-                                    Row(
-                                      children: [
-                                        _buildActionButton(
-                                          icon: Icons.info_outline,
-                                          label: 'รายละเอียด',
-                                          onPressed: () =>
-                                              _showDetailDialog(request),
-                                          backgroundColor: blueColor,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        _buildActionButton(
-                                          icon: Icons.check_circle_outline,
-                                          label: 'อนุมัติ',
-                                          onPressed: () => _processRequest(
-                                              request.id, 'approve'),
-                                          backgroundColor: greenColor,
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(
-                                        height:
-                                            8), // Space between rows of buttons
-                                    Row(
-                                      children: [
-                                        _buildActionButton(
-                                          icon: Icons.cancel_outlined,
-                                          label: 'ไม่อนุมัติ',
-                                          onPressed: () =>
-                                              _showDisapproveDialog(request.id),
-                                          backgroundColor: redColor,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        _buildActionButton(
-                                          icon: Icons.edit,
-                                          label: 'แก้ไข',
-                                          onPressed: () =>
-                                              _showEditStatusDialog(request),
-                                          backgroundColor: orangeColor,
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
+                                        'แผนก:', request.department!),
+                                  if (request.position != null &&
+                                      request.position!.isNotEmpty)
+                                    _buildInfoRow(
+                                        'ตำแหน่ง:', request.position!),
+                                  if (request.branch != null &&
+                                      request.branch!.isNotEmpty)
+                                    _buildInfoRow('สาขา:', request.branch!),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      _buildActionButton(
+                                        icon: Icons.info_outline,
+                                        label: 'รายละเอียด',
+                                        onPressed: () =>
+                                            _showDetailDialog(request),
+                                        backgroundColor: blueColor,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      _buildActionButton(
+                                        icon: Icons.check_circle_outline,
+                                        label: 'อนุมัติ',
+                                        onPressed: () => _processRequest(
+                                            request.id, 'approve'),
+                                        backgroundColor: greenColor,
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      _buildActionButton(
+                                        icon: Icons.cancel_outlined,
+                                        label: 'ไม่อนุมัติ',
+                                        onPressed: () => _showDisapproveDialog(
+                                            request.id),
+                                        backgroundColor: redColor,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      _buildActionButton(
+                                        icon: Icons.edit,
+                                        label: 'แก้ไข',
+                                        onPressed: () =>
+                                            _showEditStatusDialog(request),
+                                        backgroundColor: orangeColor,
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ),
                             );
                           },
@@ -901,7 +868,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                   // --- History Requests Section ---
                   Text(
                     'ประวัติการลา (7 วันล่าสุด)',
-                    style: GoogleFonts.kanit(
+                    style: GoogleFonts.ibmPlexSansThai(
                         fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 16),
@@ -911,7 +878,7 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                             padding: const EdgeInsets.all(24.0),
                             child: Text(
                               'ยังไม่มีประวัติการลาใน 7 วันล่าสุด',
-                              style: GoogleFonts.kanit(
+                              style: GoogleFonts.ibmPlexSansThai(
                                   fontSize: 16, color: Colors.grey.shade600),
                             ),
                           ),
@@ -922,110 +889,74 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                           itemCount: _historyRequests.length,
                           itemBuilder: (context, index) {
                             final request = _historyRequests[index];
-                            return Card(
-                              margin: const EdgeInsets.symmetric(vertical: 8),
-                              elevation: 2,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: BorderSide(
-                                    color: _getStateBackgroundColor(
-                                        request.state)),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.all(16.0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text(
-                                          '${request.requesterFirstname ?? ''} ${request.requesterLastname ?? ''}',
-                                          style: GoogleFonts.kanit(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8, vertical: 4),
-                                          decoration: BoxDecoration(
-                                            color:
-                                                _getStateColor(request.state),
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                          ),
-                                          child: Text(
-                                            request.state,
-                                            style: GoogleFonts.kanit(
-                                                color: Colors.white,
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const Divider(height: 20, thickness: 1),
+                            final dateLabel = request.leaveStartDate ==
+                                    request.leaveEndDate
+                                ? _formatThaiDate(request.leaveStartDate)
+                                : '${_formatThaiDate(request.leaveStartDate)} - ${_formatThaiDate(request.leaveEndDate)}';
+                            final requesterName =
+                                '${request.requesterFirstname ?? ''} ${request.requesterLastname ?? ''}'
+                                    .trim();
+                            return ExpandableHistoryCard(
+                              leadingIcon: Icons.event_note_rounded,
+                              accentColor: _getStateColor(request.state),
+                              dateLabel: dateLabel,
+                              typeLabel: request.leaveType,
+                              status: request.state,
+                              statusColor: _getStateColor(request.state),
+                              subtitle: requesterName.isEmpty
+                                  ? null
+                                  : 'ผู้ขอ: $requesterName',
+                              details: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildInfoRow('เวลา:',
+                                      '${_formatThaiTime(request.leaveStartTime)} - ${_formatThaiTime(request.leaveEndTime)}'),
+                                  if (request.note != null &&
+                                      request.note!.isNotEmpty)
                                     _buildInfoRow(
-                                        'ประเภทการลา:', request.leaveType),
+                                        'หมายเหตุ:', request.note!),
+                                  if (request.department != null &&
+                                      request.department!.isNotEmpty)
                                     _buildInfoRow(
-                                        'วันที่ลา:',
-                                        _formatThaiDate(
-                                                request.leaveStartDate) +
-                                            (request.leaveStartDate !=
-                                                    request.leaveEndDate
-                                                ? ' ถึง ${_formatThaiDate(request.leaveEndDate)}'
-                                                : '')),
-                                    _buildInfoRow('เวลา:',
-                                        '${_formatThaiTime(request.leaveStartTime)} - ${_formatThaiTime(request.leaveEndTime)}'),
-
-                                    if (request.note != null &&
-                                        request.note!.isNotEmpty)
-                                      _buildInfoRow('หมายเหตุ:', request.note!),
-                                    if (request.department != null &&
-                                        request.department!.isNotEmpty)
-                                      _buildInfoRow(
-                                          'แผนก:', request.department!),
-                                    if (request.position != null &&
-                                        request.position!.isNotEmpty)
-                                      _buildInfoRow(
-                                          'ตำแหน่ง:', request.position!),
-                                    if (request.reason != null &&
-                                        request.reason!.isNotEmpty)
-                                      _buildInfoRow('เหตุผล (ไม่อนุมัติ):',
-                                          request.reason!),
-                                    if (request.approvedBy != null &&
-                                        request.approverFirstname != null &&
-                                        request.approverLastname != null)
-                                      _buildInfoRow('ผู้อนุมัติ:',
-                                          '${request.approverFirstname} ${request.approverLastname}'),
-                                    if (request.approvedAt != null)
-                                      _buildInfoRow(
-                                          'อนุมัติเมื่อ:',
-                                          DateFormat('d/M/yyyy HH:mm', 'th')
-                                              .format(request.approvedAt!)),
-                                    if (request.filePath != null &&
-                                        request.filePath!.isNotEmpty)
-                                      Align(
-                                        alignment: Alignment.bottomRight,
-                                        child: TextButton.icon(
-                                          onPressed: () async {
-                                            await _openFileUrl(
-                                                request.filePath);
-                                          },
-                                          icon:
-                                              const Icon(Icons.image, size: 18),
-                                          label: Text('ดูไฟล์แนบ',
-                                              style: GoogleFonts.kanit()),
-                                          style: TextButton.styleFrom(
-                                            foregroundColor:
-                                                Colors.blue.shade700,
-                                          ),
-                                        ),
+                                        'แผนก:', request.department!),
+                                  if (request.position != null &&
+                                      request.position!.isNotEmpty)
+                                    _buildInfoRow(
+                                        'ตำแหน่ง:', request.position!),
+                                  if (request.branch != null &&
+                                      request.branch!.isNotEmpty)
+                                    _buildInfoRow('สาขา:', request.branch!),
+                                  if (request.reason != null &&
+                                      request.reason!.isNotEmpty)
+                                    _buildInfoRow('เหตุผล (ไม่อนุมัติ):',
+                                        request.reason!),
+                                  if (request.approvedBy != null &&
+                                      request.approverFirstname != null &&
+                                      request.approverLastname != null)
+                                    _buildInfoRow('ผู้อนุมัติ:',
+                                        '${request.approverFirstname} ${request.approverLastname}'),
+                                  if (request.approvedAt != null)
+                                    _buildInfoRow(
+                                        'อนุมัติเมื่อ:',
+                                        DateFormat('d/M/yyyy HH:mm', 'th')
+                                            .format(request.approvedAt!)),
+                                  if (request.filePath != null &&
+                                      request.filePath!.isNotEmpty)
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: TextButton.icon(
+                                        onPressed: () async {
+                                          await _openFileUrl(
+                                              request.filePath);
+                                        },
+                                        icon: const Icon(Icons.image,
+                                            size: 18),
+                                        label: Text('ดูไฟล์แนบ',
+                                            style: GoogleFonts
+                                                .ibmPlexSansThai()),
                                       ),
-                                    // No edit button for history requests
-                                  ],
-                                ),
+                                    ),
+                                ],
                               ),
                             );
                           },

@@ -79,14 +79,20 @@ class AppBottomNavBar extends StatelessWidget {
       );
     }
 
+    // ✅ ใช้สีจาก Theme — เปลี่ยนตาม ThemeController อัตโนมัติ
+    final scheme = Theme.of(context).colorScheme;
+    final Color bgColor = scheme.primary;
+    final Color onBg = scheme.onPrimary;
+
     return BottomNavigationBar(
-      items: navItems, // ใช้รายการเมนูที่สร้างขึ้นแบบมีเงื่อนไข
-      currentIndex: currentIndex, // ดัชนีของรายการที่ถูกเลือกในปัจจุบัน
-      selectedItemColor: selectedItemColor, // สีของรายการที่ถูกเลือก
-      unselectedItemColor: Colors.grey.shade600, // สีของรายการที่ไม่ได้ถูกเลือก
-      onTap: onItemTapped, // Callback เมื่อมีการแตะที่รายการ
-      type: BottomNavigationBarType.fixed, // ทำให้รายการมีขนาดเท่ากัน
-      showUnselectedLabels: true, // แสดงข้อความของรายการที่ไม่ได้ถูกเลือกด้วย
+      items: navItems,
+      currentIndex: currentIndex,
+      selectedItemColor: onBg, // ตัวอักษรบนพื้น primary
+      unselectedItemColor: onBg.withOpacity(0.6),
+      backgroundColor: bgColor,
+      onTap: onItemTapped,
+      type: BottomNavigationBarType.fixed,
+      showUnselectedLabels: true,
     );
   }
 }

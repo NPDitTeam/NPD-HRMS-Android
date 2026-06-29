@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:geocoding/geocoding.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'dart:io';
@@ -78,7 +79,7 @@ class CheckinScreenState extends State<CheckinScreen> {
       if (_isDisposed) return; // ✅ เช็คอีกครั้งหลัง async
       
       // คำนวณระยะทางเมื่อไม่ใช่โหมดสาธิตเท่านั้น
-      if (!widget.isDemoUser && _allowOffsiteTime == 0) {
+      if (_allowOffsiteTime == 0) {
         _calculateDistance();
       }
       if (_mapController != null && !_isDisposed) {
@@ -99,14 +100,19 @@ class CheckinScreenState extends State<CheckinScreen> {
     try {
       final url = Uri.parse(
           'https://npdhrms.com/api/api_checkin_status1.php?user_id=${widget.userId}');
+      debugPrint('🔍 DEBUG calling API with user_id=${widget.userId}');
       final response = await http.get(url).timeout(const Duration(seconds: 10));
 
       if (response.statusCode == 200) {
         final decoded = json.decode(response.body);
+        debugPrint('🔍 DEBUG raw response: ${response.body}');
         if (decoded['status'] == 'success') {
           _checkinData = decoded['data'];
+          final rawValue = _checkinData!['allowOffsiteTime'];
+          debugPrint('🔍 DEBUG allowOffsiteTime raw=$rawValue (${rawValue.runtimeType})');
           _allowOffsiteTime =
               int.tryParse(_checkinData!['allowOffsiteTime'].toString()) ?? 0;
+          debugPrint('🔍 DEBUG _allowOffsiteTime parsed=$_allowOffsiteTime');
         } else {
           throw Exception(decoded['message'] ?? 'ไม่สามารถโหลดข้อมูลลงเวลา');
         }
@@ -138,7 +144,32 @@ class CheckinScreenState extends State<CheckinScreen> {
       return Future.error('การเข้าถึงตำแหน่งถูกปฏิเสธถาวร');
     }
 
-    return await Geolocator.getCurrentPosition();
+    // ✅ แก้บัค: ระบุ accuracy สูงสุด + timeout เพื่อให้ตำแหน่งแม่นยำ
+    // ดึงตำแหน่งแรกก่อน (อาจเป็น cache)
+    Position position = await Geolocator.getCurrentPosition(
+      desiredAccuracy: LocationAccuracy.best,
+      timeLimit: const Duration(seconds: 15),
+    );
+
+    // ✅ ถ้าความแม่นยำต่ำกว่า 50 เมตร ลองดึงอีกครั้ง
+    if (position.accuracy > 50) {
+      try {
+        final betterPosition = await Geolocator.getCurrentPosition(
+          desiredAccuracy: LocationAccuracy.bestForNavigation,
+          timeLimit: const Duration(seconds: 10),
+        );
+        // ใช้ตำแหน่งใหม่ถ้าแม่นยำกว่า
+        if (betterPosition.accuracy < position.accuracy) {
+          position = betterPosition;
+        }
+      } catch (_) {
+        // ถ้า timeout ใช้ตำแหน่งเดิม
+        debugPrint('⚠️ ดึงตำแหน่งรอบ 2 ไม่สำเร็จ ใช้ตำแหน่งเดิม (accuracy: ${position.accuracy}m)');
+      }
+    }
+
+    debugPrint('📍 ตำแหน่ง: ${position.latitude}, ${position.longitude} (accuracy: ${position.accuracy}m)');
+    return position;
   }
 
   void _calculateDistance() {
@@ -174,7 +205,7 @@ class CheckinScreenState extends State<CheckinScreen> {
     _safeSetState(() {
       _circles.clear();
       // ไม่แสดงวงกลมในโหมดสาธิต
-      if (!widget.isDemoUser && _allowOffsiteTime == 0) {
+      if (_allowOffsiteTime == 0) {
         _circles.add(Circle(
           circleId: const CircleId('radius'),
           center: branchLocation,
@@ -204,6 +235,50 @@ class CheckinScreenState extends State<CheckinScreen> {
     }
   }
 
+  // ✅ Reverse Geocoding: ดึงที่อยู่ไทยแบบละเอียด รวมเป็นฟิลด์เดียว
+  // ใช้ native API ของ iOS/Android (ไม่ต้องใช้ API key)
+  // คืนค่าเป็น String เดียว เช่น "123 ถนนสุขุมวิท ต.คลองตันเหนือ อ.วัฒนา จ.กรุงเทพมหานคร 10110"
+  Future<String> _getThaiAddressFromCoordinates(
+      double lat, double lng) async {
+    try {
+      // ตั้ง locale เป็นไทยก่อน (geocoding 3.0.0 ไม่มี named param แล้ว)
+      try {
+        await setLocaleIdentifier('th_TH');
+      } catch (_) {
+        // ถ้า set locale ไม่สำเร็จ ใช้ default ของระบบ
+      }
+
+      final placemarks = await placemarkFromCoordinates(lat, lng)
+          .timeout(const Duration(seconds: 8));
+
+      if (placemarks.isEmpty) return '';
+
+      final p = placemarks.first;
+
+      // โครงสร้างที่อยู่ไทยจาก Placemark:
+      // - name              → เลขที่/ชื่อสถานที่
+      // - thoroughfare      → ถนน
+      // - subLocality       → ตำบล / แขวง
+      // - locality          → อำเภอ / เขต
+      // - administrativeArea → จังหวัด
+      // - postalCode        → รหัสไปรษณีย์
+      final parts = <String>[
+        if ((p.name ?? '').isNotEmpty && p.name != p.thoroughfare) p.name!,
+        if ((p.thoroughfare ?? '').isNotEmpty) p.thoroughfare!,
+        if ((p.subLocality ?? '').isNotEmpty) 'ต.${p.subLocality}',
+        if ((p.locality ?? '').isNotEmpty) 'อ.${p.locality}',
+        if ((p.administrativeArea ?? '').isNotEmpty)
+          'จ.${p.administrativeArea}',
+        if ((p.postalCode ?? '').isNotEmpty) p.postalCode!,
+      ];
+
+      return parts.join(' ').trim();
+    } catch (e) {
+      debugPrint('⚠️ Reverse Geocoding failed: $e');
+      return '';
+    }
+  }
+
   Future<void> _performCheckin(String type) async {
     if (_currentPosition == null) {
       _showStatusDialog('❗ ไม่พบตำแหน่งปัจจุบัน', isError: true);
@@ -215,6 +290,14 @@ class CheckinScreenState extends State<CheckinScreen> {
     });
 
     try {
+      // ✅ ดึงที่อยู่ไทยรวมเป็นฟิลด์เดียว (ถ้าดึงไม่ได้ ส่งค่าว่าง — ไม่บล็อกการลงเวลา)
+      final address = await _getThaiAddressFromCoordinates(
+        _currentPosition!.latitude,
+        _currentPosition!.longitude,
+      );
+
+      if (_isDisposed) return;
+
       final url =
           Uri.parse('https://npdhrms.com/api/api_checkin_save_test1.php');
       final response = await http.post(
@@ -225,6 +308,8 @@ class CheckinScreenState extends State<CheckinScreen> {
           'type': type,
           'lat': _currentPosition!.latitude,
           'lng': _currentPosition!.longitude,
+          'accuracy': _currentPosition!.accuracy,
+          'address': address, // ✅ ที่อยู่ไทยรวมฟิลด์เดียว
         }),
       );
 
@@ -324,7 +409,7 @@ class CheckinScreenState extends State<CheckinScreen> {
       canCheckOut = _checkinData!['canCheckOut'] == true;
 
       // ถ้าเป็นโหมดสาธิต (ไม่ว่าจะจาก widget.isDemoUser หรือ API)
-      if (widget.isDemoUser || _allowOffsiteTime == 1) {
+      if (_allowOffsiteTime == 1) {
         inRange = true; // ถือว่าอยู่ในระยะเสมอ
       } else {
         // ถ้าไม่ใช่โหมดสาธิต ให้เช็คระยะทาง
@@ -389,16 +474,28 @@ class CheckinScreenState extends State<CheckinScreen> {
                   style: const TextStyle(fontSize: 16)),
               const SizedBox(height: 6),
               // แสดงข้อความโหมดสาธิตเมื่อเป็นไปตามเงื่อนไข
-              if (widget.isDemoUser || _allowOffsiteTime == 1)
+              if (_allowOffsiteTime == 1)
                 Text('📍 โหมดสาธิต: ไม่จำกัดพื้นที่',
                     style: TextStyle(
                         fontSize: 16,
-                        color: Colors.blue.shade700,
+                        color: const Color(0xFF1A1A1A),
                         fontWeight: FontWeight.bold))
               else ...[
                 Text(
                     '📍 ระยะจากสาขา: ${_distanceInMeters?.toStringAsFixed(0) ?? '-'} เมตร',
                     style: const TextStyle(fontSize: 16)),
+                if (_currentPosition != null)
+                  Text(
+                    '📡 ความแม่นยำ GPS: ${_currentPosition!.accuracy.toStringAsFixed(0)} เมตร',
+                    style: TextStyle(
+                      fontSize: 13,
+                      color: _currentPosition!.accuracy <= 20
+                          ? Colors.green.shade700
+                          : _currentPosition!.accuracy <= 50
+                              ? Colors.orange.shade700
+                              : Colors.red.shade700,
+                    ),
+                  ),
                 if (!inRange && _distanceInMeters != null)
                   const Text('(คุณอยู่นอกพื้นที่ที่กำหนด)',
                       style: TextStyle(color: Colors.red)),

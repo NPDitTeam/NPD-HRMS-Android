@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import 'main.dart' show User;
 import 'models/approve_add_time_log.dart'; // Ensure this model is updated as well
+import 'widgets/expandable_history_card.dart';
 
 // --- Helper Functions ---
 String _formatTimeOfDayToString(TimeOfDay tod) {
@@ -317,7 +318,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                 fit: BoxFit.contain,
                 errorBuilder: (context, error, stackTrace) => Text(
                     'โหลดไฟล์ไม่สำเร็จ',
-                    style: GoogleFonts.kanit(color: Colors.red)),
+                    style: GoogleFonts.ibmPlexSansThai(color: Colors.red)),
               ),
             ),
           ),
@@ -336,7 +337,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
       context: context,
       builder: (BuildContext dialogContext) {
         return AlertDialog(
-          title: Text('ไม่อนุมัติคำขอเพิ่มเวลา', style: GoogleFonts.kanit()),
+          title: Text('ไม่อนุมัติคำขอเพิ่มเวลา', style: GoogleFonts.ibmPlexSansThai()),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -345,7 +346,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                   controller: reasonController,
                   decoration: InputDecoration(
                     labelText: 'เหตุผลในการไม่อนุมัติ',
-                    labelStyle: GoogleFonts.kanit(),
+                    labelStyle: GoogleFonts.ibmPlexSansThai(),
                     border: const OutlineInputBorder(),
                   ),
                   maxLines: 3,
@@ -356,14 +357,14 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
           actions: <Widget>[
             TextButton(
               child: Text('ยกเลิก',
-                  style: GoogleFonts.kanit(color: Colors.grey.shade700)),
+                  style: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade700)),
               onPressed: () {
                 Navigator.of(dialogContext).pop();
               },
             ),
             ElevatedButton(
               child: Text('ยืนยันไม่อนุมัติ',
-                  style: GoogleFonts.kanit(color: Colors.white)),
+                  style: GoogleFonts.ibmPlexSansThai(color: Colors.white)),
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
               onPressed: () {
                 Navigator.of(dialogContext).pop();
@@ -389,7 +390,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
           builder: (BuildContext context, StateSetter setStateDialog) {
             return AlertDialog(
               title:
-                  Text('แก้ไขสถานะคำขอเพิ่มเวลา', style: GoogleFonts.kanit()),
+                  Text('แก้ไขสถานะคำขอเพิ่มเวลา', style: GoogleFonts.ibmPlexSansThai()),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -398,7 +399,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                       value: selectedState,
                       decoration: InputDecoration(
                         labelText: 'สถานะใหม่',
-                        labelStyle: GoogleFonts.kanit(),
+                        labelStyle: GoogleFonts.ibmPlexSansThai(),
                         border: const OutlineInputBorder(),
                       ),
                       items: <String>[
@@ -409,7 +410,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                       ].map<DropdownMenuItem<String>>((String value) {
                         return DropdownMenuItem<String>(
                           value: value,
-                          child: Text(value, style: GoogleFonts.kanit()),
+                          child: Text(value, style: GoogleFonts.ibmPlexSansThai()),
                         );
                       }).toList(),
                       onChanged: (String? newValue) {
@@ -425,7 +426,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                       controller: reasonController,
                       decoration: InputDecoration(
                         labelText: 'เหตุผล (หากมีการเปลี่ยนแปลงสถานะหรือแก้ไข)',
-                        labelStyle: GoogleFonts.kanit(),
+                        labelStyle: GoogleFonts.ibmPlexSansThai(),
                         border: const OutlineInputBorder(),
                       ),
                       maxLines: 3,
@@ -436,14 +437,14 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
               actions: <Widget>[
                 TextButton(
                   child: Text('ยกเลิก',
-                      style: GoogleFonts.kanit(color: Colors.grey.shade700)),
+                      style: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade700)),
                   onPressed: () {
                     Navigator.of(dialogContext).pop();
                   },
                 ),
                 ElevatedButton(
                   child: Text('บันทึกการแก้ไข',
-                      style: GoogleFonts.kanit(color: Colors.white)),
+                      style: GoogleFonts.ibmPlexSansThai(color: Colors.white)),
                   style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.orange.shade700),
                   onPressed: () {
@@ -470,12 +471,12 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
           SizedBox(
             width: 120,
             child: Text(label,
-                style: GoogleFonts.kanit(
+                style: GoogleFonts.ibmPlexSansThai(
                     fontWeight: FontWeight.w500, color: Colors.grey.shade700)),
           ),
           Expanded(
             child: Text(value,
-                style: GoogleFonts.kanit(color: Colors.grey.shade800)),
+                style: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade800)),
           ),
         ],
       ),
@@ -488,7 +489,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
       context: context,
       builder: (BuildContext dialogContext) {
         return AlertDialog(
-          title: Text('รายละเอียดคำขอเพิ่มเวลา', style: GoogleFonts.kanit()),
+          title: Text('รายละเอียดคำขอเพิ่มเวลา', style: GoogleFonts.ibmPlexSansThai()),
           content: SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -509,10 +510,21 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                     'เวลาออก:', _formatTimeOfDayToString(request.checkoutTime)),
                 _buildInfoRowInDialog('แผนก:', request.department),
                 _buildInfoRowInDialog('ตำแหน่ง:', request.position),
+                _buildInfoRowInDialog('สาขา:', request.branch ?? '-'),
                 if (request.reasonType != null &&
                     request.reasonType!.isNotEmpty)
                   _buildInfoRowInDialog(
                       'ประเภทเพิ่มเวลา:', request.reasonType!),
+                if (request.allowanceType != null &&
+                    request.allowanceType!.isNotEmpty)
+                  _buildInfoRowInDialog(
+                      'รายการประเภทค่าเบี้ยเลี้ยง:', request.allowanceType!),
+                if (request.amount != null &&
+                    request.amount!.isNotEmpty &&
+                    request.amount != '0' &&
+                    request.amount != '0.00')
+                  _buildInfoRowInDialog(
+                      'จำนวนเงิน:', '${request.amount} บาท'),
                 if (request.userNote != null && request.userNote!.isNotEmpty)
                   _buildInfoRowInDialog('หมายเหตุผู้ขอ:', request.userNote!),
                 _buildInfoRowInDialog('สถานะ:', request.state),
@@ -537,7 +549,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
           actions: <Widget>[
             TextButton(
               child: Text('ปิด',
-                  style: GoogleFonts.kanit(color: Colors.grey.shade700)),
+                  style: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade700)),
               onPressed: () {
                 Navigator.of(dialogContext).pop();
               },
@@ -558,12 +570,12 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
           SizedBox(
             width: 120,
             child: Text(label,
-                style: GoogleFonts.kanit(
+                style: GoogleFonts.ibmPlexSansThai(
                     fontWeight: FontWeight.w500, color: Colors.grey.shade700)),
           ),
           Expanded(
             child: Text(value,
-                style: GoogleFonts.kanit(color: Colors.grey.shade800)),
+                style: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade800)),
           ),
         ],
       ),
@@ -576,7 +588,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
     final Color greenColor = Colors.green;
     final Color redColor = Colors.red;
     final Color orangeColor = Colors.orange.shade700;
-    final Color blueColor = Colors.blue.shade700;
+    final Color blueColor = const Color(0xFF1A1A1A);
     final Color foregroundColor = Colors.white;
 
     Widget _buildActionButton({
@@ -591,7 +603,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
           icon: Icon(icon, size: 18),
           label: Text(label,
               style:
-                  GoogleFonts.kanit(fontSize: 13, fontWeight: FontWeight.w500)),
+                  GoogleFonts.ibmPlexSansThai(fontSize: 13, fontWeight: FontWeight.w500)),
           style: ElevatedButton.styleFrom(
             backgroundColor: backgroundColor,
             foregroundColor: foregroundColor,
@@ -643,7 +655,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                   // --- Pending Requests Section ---
                   Text(
                     'รายการคำขอเพิ่มเวลาที่รออนุมัติ',
-                    style: GoogleFonts.kanit(
+                    style: GoogleFonts.ibmPlexSansThai(
                         fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 16),
@@ -653,7 +665,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                             padding: const EdgeInsets.all(24.0),
                             child: Text(
                               'ยังไม่มีคำขอเพิ่มเวลาที่รออนุมัติ',
-                              style: GoogleFonts.kanit(
+                              style: GoogleFonts.ibmPlexSansThai(
                                   fontSize: 16, color: Colors.grey.shade600),
                             ),
                           ),
@@ -664,150 +676,116 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                           itemCount: _pendingRequests.length,
                           itemBuilder: (context, index) {
                             final request = _pendingRequests[index];
-                            return Card(
-                              margin: const EdgeInsets.symmetric(vertical: 8),
-                              elevation: 2,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: BorderSide(
-                                    color: _getStateBackgroundColor(
-                                        request.state)),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.all(16.0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text(
-                                          (request.requesterFirstname
-                                                          ?.isNotEmpty ==
-                                                      true ||
-                                                  request.requesterLastname
-                                                          ?.isNotEmpty ==
-                                                      true)
-                                              ? '${request.requesterFirstname ?? ''} ${request.requesterLastname ?? ''}'
-                                              : (request.username ??
-                                                  'ไม่ระบุชื่อ'),
-                                          style: GoogleFonts.kanit(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8, vertical: 4),
-                                          decoration: BoxDecoration(
-                                            color:
-                                                _getStateColor(request.state),
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                          ),
-                                          child: Text(
-                                            request.state,
-                                            style: GoogleFonts.kanit(
-                                                color: Colors.white,
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const Divider(height: 20, thickness: 1),
-                                    _buildInfoRow(
-                                      'ชื่อผู้ขอ:',
-                                      (request.requesterFirstname?.isNotEmpty ==
-                                                  true ||
-                                              request.requesterLastname
-                                                      ?.isNotEmpty ==
-                                                  true)
-                                          ? '${request.requesterFirstname ?? ''} ${request.requesterLastname ?? ''}'
-                                          : (request.username ?? 'ไม่ระบุชื่อ'),
-                                    ),
-                                    _buildInfoRow('วันที่ทำงาน:',
-                                        _formatThaiDate(request.workDate)),
-                                    _buildInfoRow(
-                                        'เวลาเข้า:',
-                                        _formatTimeOfDayToString(
-                                            request.checkinTime)),
-                                    _buildInfoRow(
-                                        'เวลาออก:',
-                                        _formatTimeOfDayToString(
-                                            request.checkoutTime)),
-                                    _buildInfoRow('แผนก:', request.department),
-                                    _buildInfoRow('ตำแหน่ง:', request.position),
-
-                                    if (request.reasonType != null &&
-                                        request.reasonType!.isNotEmpty)
-                                      _buildInfoRow('ประเภทเพิ่มเวลา:',
-                                          request.reasonType!),
-
-                                    if (request.userNote != null &&
-                                        request.userNote!.isNotEmpty)
-                                      _buildInfoRow(
-                                          'หมายเหตุผู้ขอ:', request.userNote!),
-                                    // Action Buttons for Pending Requests
-
-                                    if (request.filePath != null &&
-                                        request.filePath!.isNotEmpty)
-                                      TextButton.icon(
+                            final requesterName = (request.requesterFirstname
+                                            ?.isNotEmpty ==
+                                        true ||
+                                    request.requesterLastname?.isNotEmpty ==
+                                        true)
+                                ? '${request.requesterFirstname ?? ''} ${request.requesterLastname ?? ''}'
+                                    .trim()
+                                : (request.username ?? 'ไม่ระบุชื่อ');
+                            final typeLabel = (request.reasonType != null &&
+                                    request.reasonType!.isNotEmpty)
+                                ? request.reasonType!
+                                : 'เพิ่มเวลาทำงาน';
+                            return ExpandableHistoryCard(
+                              leadingIcon: Icons.more_time_rounded,
+                              accentColor: _getStateColor(request.state),
+                              dateLabel:
+                                  _formatThaiDate(request.workDate),
+                              typeLabel: typeLabel,
+                              status: request.state,
+                              statusColor: _getStateColor(request.state),
+                              subtitle: 'ผู้ขอ: $requesterName',
+                              initiallyExpanded: true,
+                              details: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildInfoRow('เวลาเข้า:',
+                                      _formatTimeOfDayToString(
+                                          request.checkinTime)),
+                                  _buildInfoRow('เวลาออก:',
+                                      _formatTimeOfDayToString(
+                                          request.checkoutTime)),
+                                  _buildInfoRow(
+                                      'แผนก:', request.department),
+                                  _buildInfoRow(
+                                      'ตำแหน่ง:', request.position),
+                                  if (request.branch != null &&
+                                      request.branch!.isNotEmpty)
+                                    _buildInfoRow('สาขา:', request.branch!),
+                                  if (request.allowanceType != null &&
+                                      request.allowanceType!.isNotEmpty)
+                                    _buildInfoRow('รายการค่าเบี้ยเลี้ยง:',
+                                        request.allowanceType!),
+                                  if (request.amount != null &&
+                                      request.amount!.isNotEmpty &&
+                                      request.amount != '0' &&
+                                      request.amount != '0.00')
+                                    _buildInfoRow('จำนวนเงิน:',
+                                        '${request.amount} บาท'),
+                                  if (request.userNote != null &&
+                                      request.userNote!.isNotEmpty)
+                                    _buildInfoRow('หมายเหตุผู้ขอ:',
+                                        request.userNote!),
+                                  if (request.filePath != null &&
+                                      request.filePath!.isNotEmpty)
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: TextButton.icon(
                                         onPressed: () =>
-                                            _openAttachment(request.filePath!),
-                                        icon: const Icon(Icons.attach_file,
-                                            color: Colors.blue),
-                                        label: Text(
-                                          'ดูไฟล์แนบ',
-                                          style: GoogleFonts.kanit(
-                                              color: Colors.blue),
-                                        ),
+                                            _openAttachment(
+                                                request.filePath!),
+                                        icon: const Icon(
+                                            Icons.attach_file,
+                                            size: 18),
+                                        label: Text('ดูไฟล์แนบ',
+                                            style: GoogleFonts
+                                                .ibmPlexSansThai()),
                                       ),
-
-                                    const SizedBox(height: 16),
-                                    Row(
-                                      children: [
-                                        _buildActionButton(
-                                          icon: Icons.info_outline,
-                                          label: 'รายละเอียด',
-                                          onPressed: () =>
-                                              _showDetailDialog(request),
-                                          backgroundColor: blueColor,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        _buildActionButton(
-                                          icon: Icons.check_circle_outline,
-                                          label: 'อนุมัติ',
-                                          onPressed: () => _processRequest(
-                                              request.id, 'approve'),
-                                          backgroundColor: greenColor,
-                                        ),
-                                      ],
                                     ),
-                                    const SizedBox(
-                                        height:
-                                            8), // Space between rows of buttons
-                                    Row(
-                                      children: [
-                                        _buildActionButton(
-                                          icon: Icons.cancel_outlined,
-                                          label: 'ไม่อนุมัติ',
-                                          onPressed: () =>
-                                              _showDisapproveDialog(request.id),
-                                          backgroundColor: redColor,
-                                        ),
-                                        const SizedBox(width: 8),
-                                        _buildActionButton(
-                                          icon: Icons.edit,
-                                          label: 'แก้ไข',
-                                          onPressed: () =>
-                                              _showEditStatusDialog(request),
-                                          backgroundColor: orangeColor,
-                                        ),
-                                      ],
-                                    ),
-                                  ],
-                                ),
+                                  const SizedBox(height: 12),
+                                  Row(
+                                    children: [
+                                      _buildActionButton(
+                                        icon: Icons.info_outline,
+                                        label: 'รายละเอียด',
+                                        onPressed: () =>
+                                            _showDetailDialog(request),
+                                        backgroundColor: blueColor,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      _buildActionButton(
+                                        icon: Icons.check_circle_outline,
+                                        label: 'อนุมัติ',
+                                        onPressed: () => _processRequest(
+                                            request.id, 'approve'),
+                                        backgroundColor: greenColor,
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 8),
+                                  Row(
+                                    children: [
+                                      _buildActionButton(
+                                        icon: Icons.cancel_outlined,
+                                        label: 'ไม่อนุมัติ',
+                                        onPressed: () =>
+                                            _showDisapproveDialog(
+                                                request.id),
+                                        backgroundColor: redColor,
+                                      ),
+                                      const SizedBox(width: 8),
+                                      _buildActionButton(
+                                        icon: Icons.edit,
+                                        label: 'แก้ไข',
+                                        onPressed: () =>
+                                            _showEditStatusDialog(request),
+                                        backgroundColor: orangeColor,
+                                      ),
+                                    ],
+                                  ),
+                                ],
                               ),
                             );
                           },
@@ -818,7 +796,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                   // --- History Requests Section ---
                   Text(
                     'ประวัติการเพิ่มเวลา (7 วันล่าสุด)',
-                    style: GoogleFonts.kanit(
+                    style: GoogleFonts.ibmPlexSansThai(
                         fontSize: 18, fontWeight: FontWeight.bold),
                   ),
                   const SizedBox(height: 16),
@@ -828,7 +806,7 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                             padding: const EdgeInsets.all(24.0),
                             child: Text(
                               'ยังไม่มีประวัติคำขอเพิ่มเวลาใน 7 วันล่าสุด',
-                              style: GoogleFonts.kanit(
+                              style: GoogleFonts.ibmPlexSansThai(
                                   fontSize: 16, color: Colors.grey.shade600),
                             ),
                           ),
@@ -839,111 +817,84 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                           itemCount: _historyRequests.length,
                           itemBuilder: (context, index) {
                             final request = _historyRequests[index];
-                            return Card(
-                              margin: const EdgeInsets.symmetric(vertical: 8),
-                              elevation: 2,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
-                                side: BorderSide(
-                                    color: _getStateBackgroundColor(
-                                        request.state)),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.all(16.0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text(
-                                          '${request.requesterFirstname ?? ''} ${request.requesterLastname ?? ''}',
-                                          style: GoogleFonts.kanit(
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.bold),
-                                        ),
-                                        Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 8, vertical: 4),
-                                          decoration: BoxDecoration(
-                                            color:
-                                                _getStateColor(request.state),
-                                            borderRadius:
-                                                BorderRadius.circular(8),
-                                          ),
-                                          child: Text(
-                                            request.state,
-                                            style: GoogleFonts.kanit(
-                                                color: Colors.white,
-                                                fontSize: 12,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        ),
-                                      ],
-                                    ),
-                                    const Divider(height: 20, thickness: 1),
+                            final requesterName = (request.requesterFirstname
+                                            ?.isNotEmpty ==
+                                        true ||
+                                    request.requesterLastname?.isNotEmpty ==
+                                        true)
+                                ? '${request.requesterFirstname ?? ''} ${request.requesterLastname ?? ''}'
+                                    .trim()
+                                : (request.username ?? 'ไม่ระบุชื่อ');
+                            final typeLabel = (request.reasonType != null &&
+                                    request.reasonType!.isNotEmpty)
+                                ? request.reasonType!
+                                : 'เพิ่มเวลาทำงาน';
+                            return ExpandableHistoryCard(
+                              leadingIcon: Icons.more_time_rounded,
+                              accentColor: _getStateColor(request.state),
+                              dateLabel: _formatThaiDate(request.workDate),
+                              typeLabel: typeLabel,
+                              status: request.state,
+                              statusColor: _getStateColor(request.state),
+                              subtitle: 'ผู้ขอ: $requesterName',
+                              details: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _buildInfoRow('เวลาเข้า:',
+                                      _formatTimeOfDayToString(
+                                          request.checkinTime)),
+                                  _buildInfoRow('เวลาออก:',
+                                      _formatTimeOfDayToString(
+                                          request.checkoutTime)),
+                                  _buildInfoRow(
+                                      'แผนก:', request.department),
+                                  _buildInfoRow(
+                                      'ตำแหน่ง:', request.position),
+                                  if (request.branch != null &&
+                                      request.branch!.isNotEmpty)
+                                    _buildInfoRow('สาขา:', request.branch!),
+                                  if (request.allowanceType != null &&
+                                      request.allowanceType!.isNotEmpty)
+                                    _buildInfoRow('รายการค่าเบี้ยเลี้ยง:',
+                                        request.allowanceType!),
+                                  if (request.amount != null &&
+                                      request.amount!.isNotEmpty &&
+                                      request.amount != '0' &&
+                                      request.amount != '0.00')
+                                    _buildInfoRow('จำนวนเงิน:',
+                                        '${request.amount} บาท'),
+                                  if (request.userNote != null &&
+                                      request.userNote!.isNotEmpty)
+                                    _buildInfoRow('หมายเหตุผู้ขอ:',
+                                        request.userNote!),
+                                  if (request.reason != null &&
+                                      request.reason!.isNotEmpty)
+                                    _buildInfoRow('เหตุผล (ไม่อนุมัติ):',
+                                        request.reason!),
+                                  if (request.approvedBy != null)
+                                    _buildInfoRow('ผู้อนุมัติ:',
+                                        '${request.approverFirstname ?? ''} ${request.approverLastname ?? ''}'),
+                                  if (request.approvedAt != null)
                                     _buildInfoRow(
-                                      'ชื่อผู้ขอ:',
-                                      (request.requesterFirstname?.isNotEmpty ==
-                                                  true ||
-                                              request.requesterLastname
-                                                      ?.isNotEmpty ==
-                                                  true)
-                                          ? '${request.requesterFirstname ?? ''} ${request.requesterLastname ?? ''}'
-                                          : (request.username ?? 'ไม่ระบุชื่อ'),
-                                    ),
-
-                                    _buildInfoRow('วันที่ทำงาน:',
-                                        _formatThaiDate(request.workDate)),
-                                    _buildInfoRow(
-                                        'เวลาเข้า:',
-                                        _formatTimeOfDayToString(
-                                            request.checkinTime)),
-                                    _buildInfoRow(
-                                        'เวลาออก:',
-                                        _formatTimeOfDayToString(
-                                            request.checkoutTime)),
-                                    _buildInfoRow('แผนก:', request.department),
-                                    _buildInfoRow('ตำแหน่ง:', request.position),
-                                    if (request.reasonType != null &&
-                                        request.reasonType!.isNotEmpty)
-                                      _buildInfoRow('ประเภทเพิ่มเวลา:',
-                                          request.reasonType!),
-
-                                    if (request.userNote != null &&
-                                        request.userNote!.isNotEmpty)
-                                      _buildInfoRow(
-                                          'หมายเหตุผู้ขอ:', request.userNote!),
-                                    if (request.reason != null &&
-                                        request.reason!.isNotEmpty)
-                                      _buildInfoRow('เหตุผล (ไม่อนุมัติ):',
-                                          request.reason!),
-                                    if (request.approvedBy != null)
-                                      _buildInfoRow('ผู้อนุมัติ:',
-                                          '${request.approverFirstname ?? ''} ${request.approverLastname ?? ''}'),
-                                    if (request.approvedAt != null)
-                                      _buildInfoRow(
-                                          'อนุมัติเมื่อ:',
-                                          DateFormat('d/M/yyyy HH:mm', 'th')
-                                              .format(request.approvedAt!)),
-                                    if (request.filePath != null &&
-                                        request.filePath!.isNotEmpty)
-                                      Align(
-                                        alignment: Alignment.bottomRight,
-                                        child: TextButton.icon(
-                                          onPressed: () => _openAttachment(
-                                              request.filePath!),
-                                          icon: const Icon(Icons.attach_file,
-                                              size: 18, color: Colors.blue),
-                                          label: Text('ดูไฟล์แนบ',
-                                              style: GoogleFonts.kanit(
-                                                  color: Colors.blue)),
-                                        ),
+                                        'อนุมัติเมื่อ:',
+                                        DateFormat('d/M/yyyy HH:mm', 'th')
+                                            .format(request.approvedAt!)),
+                                  if (request.filePath != null &&
+                                      request.filePath!.isNotEmpty)
+                                    Align(
+                                      alignment: Alignment.centerRight,
+                                      child: TextButton.icon(
+                                        onPressed: () => _openAttachment(
+                                            request.filePath!),
+                                        icon: const Icon(
+                                            Icons.attach_file,
+                                            size: 18),
+                                        label: Text('ดูไฟล์แนบ',
+                                            style: GoogleFonts
+                                                .ibmPlexSansThai()),
                                       ),
-                                    // No view details or edit/approve/disapprove buttons for history
-                                  ],
-                                ),
+                                    ),
+                                ],
                               ),
                             );
                           },

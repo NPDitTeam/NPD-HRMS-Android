@@ -10,6 +10,8 @@ import 'package:intl/date_symbol_data_local.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:photo_view/photo_view.dart';
 import 'leave_allowance_screen.dart';
+import 'odoo_rpc_service.dart';
+import 'widgets/expandable_history_card.dart';
 
 import 'main.dart' show User;
 import 'models/leave_log.dart';
@@ -78,15 +80,40 @@ class LeaveScreenState extends State<LeaveScreen> {
       _leaveAllowance; // เพิ่มตัวแปรสำหรับเก็บข้อมูลสิทธิ์การลา
   bool _isLeaveDurationExceeded = false; // เพิ่มสถานะการลาเกิน
 
+  // ✅ วันหยุดบริษัท (ดึงจาก Odoo payroll.holiday)
+  List<DateTime> _companyHolidays = [];
+  // ✅ ช่วงวันหยุดยาว (≥2 วันติดกัน)
+  List<List<DateTime>> _longHolidayRanges = [];
+  // ✅ ประเภทการลาที่ยกเว้นการตรวจวันหยุดยาว
+  static const Set<String> _exemptLeaveTypes = {
+    'ลากิจไม่ได้รับค่าจ้าง',
+    'ลาป่วยมีใบรับรองแพทย์',
+    'สิทธิหยุดวันเสาร์',
+  };
+  String? _holidayRuleError;
+
   final String _baseUploadsUrl = 'https://npdhrms.com/'; // Your domain root URL
 
   // ✅ Add _needsRefresh flag to control initial data fetch in didChangeDependencies
   bool _needsRefresh = true;
 
+  // ✅ วันที่เริ่มงาน (จาก Odoo employee.salary.start_date) ใช้เช็คโปร 3 เดือน
+  String? _employeeStartDate;
+
+  // ✅ สาขาของพนักงาน (จาก Odoo employee.salary.branch_id)
+  // ใช้กำหนดสิทธิ์ "สิทธิหยุดวันเสาร์": สนง.ใหญ่ = 2 ครั้ง/เดือน, สาขาอื่น = 1 ครั้ง/เดือน
+  String? _employeeBranch;
+
+  // ✅ สิทธิหยุดวันเสาร์/เดือน ดึงจาก Odoo (saturday.leave.config) ตามสาขา
+  // ถ้า null = ยังโหลดไม่ได้ → ใช้กฎ fallback (สนง.ใหญ่ 2 / สาขา 1)
+  int? _saturdayQuota;
+
   @override
   void initState() {
     super.initState();
     initializeDateFormatting('th', null);
+    _loadCompanyHolidays(); // ✅ โหลดวันหยุดบริษัทจาก Odoo
+    _loadEmployeeStartDate(); // ✅ โหลดวันที่เริ่มงานจาก Odoo (เช็คโปร)
 
     if (widget.logToEdit != null) {
       _editingRequestId = widget.logToEdit!.id;
@@ -140,7 +167,13 @@ class LeaveScreenState extends State<LeaveScreen> {
         _leaves = []; // Clear existing data
       });
     }
-    await _fetchLeaveHistory();
+    // ✅ โหลดข้อมูลทั้งหมดใหม่พร้อมกัน (history + employee info + วันหยุด)
+    // เพื่อให้ pull-to-refresh ดึง start_date / branch ใหม่จาก Odoo ด้วย
+    await Future.wait([
+      _fetchLeaveHistory(),
+      _loadEmployeeStartDate(), // ดึง start_date + branch ใหม่
+      _loadCompanyHolidays(), // ดึงวันหยุดบริษัทใหม่
+    ]);
   }
 
   @override
@@ -186,17 +219,17 @@ class LeaveScreenState extends State<LeaveScreen> {
       builder: (BuildContext context) {
         return AlertDialog(
           title: Text("สิทธิ์การลาไม่เพียงพอ",
-              style: GoogleFonts.kanit(fontWeight: FontWeight.bold)),
+              style: GoogleFonts.ibmPlexSansThai(fontWeight: FontWeight.bold)),
           content: Text(
             "คุณสามารถ $leaveType ได้สูงสุด $remainingDays วัน",
-            style: GoogleFonts.kanit(),
+            style: GoogleFonts.ibmPlexSansThai(),
           ),
           actions: [
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
               },
-              child: Text("ตกลง", style: GoogleFonts.kanit()),
+              child: Text("ตกลง", style: GoogleFonts.ibmPlexSansThai()),
             ),
           ],
         );
@@ -470,6 +503,356 @@ class LeaveScreenState extends State<LeaveScreen> {
     }
   }
 
+  // ✅ โหลดวันหยุดบริษัทจาก Odoo payroll.holiday + จัด group วันหยุดยาว
+  Future<void> _loadCompanyHolidays() async {
+    try {
+      final odoo = OdooRpcService();
+      // โหลดปีนี้ + ปีหน้า (เผื่อลาข้ามปี)
+      final nowYear = DateTime.now().year;
+      debugPrint('🏝️ Loading company holidays for $nowYear, ${nowYear + 1}');
+      final thisYear = await odoo.getCompanyHolidays(year: nowYear);
+      final nextYear = await odoo.getCompanyHolidays(year: nowYear + 1);
+      final all = <DateTime>[...thisYear, ...nextYear];
+
+      if (!mounted) return;
+      setState(() {
+        _companyHolidays = all;
+        _longHolidayRanges = _groupLongHolidays(all);
+      });
+      debugPrint(
+          '✅ Loaded ${all.length} holidays, ${_longHolidayRanges.length} long-holiday ranges');
+      for (final r in _longHolidayRanges) {
+        debugPrint(
+            '   range: ${r.first.toIso8601String().split('T')[0]} ~ ${r.last.toIso8601String().split('T')[0]} (${r.length} days)');
+      }
+    } catch (e, st) {
+      debugPrint('⚠️ Load company holidays failed: $e');
+      debugPrint('$st');
+      // ถ้าโหลดไม่ได้ ปล่อยให้ลาต่อได้ (fail-open)
+    }
+  }
+
+  /// จัดกลุ่มวันหยุดที่ติดกันเป็นช่วง แล้วเก็บเฉพาะช่วงที่ยาว ≥ 2 วัน
+  List<List<DateTime>> _groupLongHolidays(List<DateTime> holidays) {
+    if (holidays.isEmpty) return [];
+    final sorted = [...holidays]
+      ..sort((a, b) => a.compareTo(b));
+    final List<List<DateTime>> ranges = [];
+    List<DateTime> current = [_dateOnly(sorted.first)];
+
+    for (int i = 1; i < sorted.length; i++) {
+      final d = _dateOnly(sorted[i]);
+      final diff = d.difference(current.last).inDays;
+      if (diff == 1) {
+        current.add(d);
+      } else if (diff == 0) {
+        // duplicate, skip
+      } else {
+        if (current.length >= 2) ranges.add(current);
+        current = [d];
+      }
+    }
+    if (current.length >= 2) ranges.add(current);
+    return ranges;
+  }
+
+  DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+
+  bool _isHolidayDate(DateTime d) {
+    final target = _dateOnly(d);
+    return _companyHolidays.any((h) => _dateOnly(h) == target);
+  }
+
+  /// หาวันทำงานก่อนวันที่กำหนด (ข้ามอาทิตย์ + ข้ามวันหยุดบริษัท)
+  DateTime? _findWorkingDayBefore(DateTime start) {
+    DateTime d = start.subtract(const Duration(days: 1));
+    for (int i = 0; i < 30; i++) {
+      if (d.weekday != DateTime.sunday && !_isHolidayDate(d)) return d;
+      d = d.subtract(const Duration(days: 1));
+    }
+    return null;
+  }
+
+  /// หาวันทำงานหลังวันที่กำหนด (ข้ามอาทิตย์ + ข้ามวันหยุดบริษัท)
+  DateTime? _findWorkingDayAfter(DateTime end) {
+    DateTime d = end.add(const Duration(days: 1));
+    for (int i = 0; i < 30; i++) {
+      if (d.weekday != DateTime.sunday && !_isHolidayDate(d)) return d;
+      d = d.add(const Duration(days: 1));
+    }
+    return null;
+  }
+
+  /// ✅ แสดง dialog แจ้งเงื่อนไขลาฉุกเฉิน
+  void _showEmergencyLeaveDialog() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (BuildContext ctx) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12)),
+          title: Row(
+            children: [
+              Icon(Icons.warning_amber_rounded,
+                  color: Colors.orange.shade700, size: 28),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'เงื่อนไขการลาฉุกเฉิน',
+                  style: GoogleFonts.ibmPlexSansThai(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.orange.shade900),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('การลาฉุกเฉินใช้ได้เฉพาะกรณี:',
+                  style: GoogleFonts.ibmPlexSansThai(
+                      fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Text('• บิดา (พ่อ) เสียชีวิต',
+                  style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
+              Text('• มารดา (แม่) เสียชีวิต',
+                  style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.attach_file,
+                        color: Colors.red.shade700, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'จำเป็นต้องแนบใบมรณะบัตรประกอบ',
+                        style: GoogleFonts.ibmPlexSansThai(
+                            fontSize: 13,
+                            color: Colors.red.shade900,
+                            fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(),
+              child: Text('รับทราบ',
+                  style: GoogleFonts.ibmPlexSansThai(
+                      color: Colors.orange.shade700,
+                      fontWeight: FontWeight.bold)),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  /// ✅ โหลดข้อมูลพนักงานจาก Odoo (start_date + branch)
+  /// - start_date → เช็คโปร 3 เดือน (ลากิจได้รับค่าจ้าง)
+  /// - branch → กำหนดสิทธิ์สิทธิหยุดวันเสาร์ (สนง.ใหญ่ 2 ครั้ง / สาขา 1 ครั้ง)
+  Future<void> _loadEmployeeStartDate() async {
+    debugPrint('🔄 [Odoo] เริ่มโหลดข้อมูลพนักงาน...');
+    try {
+      final code = widget.user.employeeCode ?? '';
+      debugPrint('🆔 [Odoo] employee_code = "$code"');
+      if (code.isEmpty) {
+        debugPrint('⚠️ [Odoo] ไม่มี employee_code → ข้ามการเช็คโปร/สาขา');
+        return;
+      }
+      final info = await OdooRpcService().getEmployeeInfo(code);
+      debugPrint('📦 [Odoo] getEmployeeInfo() result: ${info == null ? "NULL (ไม่พบใน employee.salary)" : info}');
+
+      if (info == null) {
+        debugPrint('⚠️ [Odoo] ไม่พบ employee_code "$code" ใน Odoo employee.salary');
+        return;
+      }
+      if (!mounted) return;
+
+      setState(() {
+        final sd = info['start_date'];
+        if (sd is String && sd.isNotEmpty) _employeeStartDate = sd;
+        final br = info['branch'];
+        if (br is String) _employeeBranch = br;
+      });
+      debugPrint(
+          '✅ [Odoo] start_date="$_employeeStartDate", branch="$_employeeBranch"');
+      debugPrint(
+          '🧪 [Probation] _isInProbation() = ${_isInProbation()}');
+
+      // ✅ ดึงสิทธิหยุดวันเสาร์/เดือน ตามสาขา จาก Odoo (saturday.leave.config)
+      final quota = await OdooRpcService().getSaturdayLeaveQuota(code);
+      if (quota != null && mounted) {
+        setState(() => _saturdayQuota = quota);
+        debugPrint('✅ [Odoo] สิทธิหยุดวันเสาร์/เดือน = $quota ครั้ง');
+      }
+    } catch (e, st) {
+      debugPrint('❌ [Odoo] โหลดข้อมูลพนักงานไม่สำเร็จ: $e');
+      debugPrint('Stack: $st');
+    }
+  }
+
+  /// ตรวจว่าพนักงานอยู่สำนักงานใหญ่หรือไม่ (รองรับการสะกดหลายแบบ)
+  bool _isHeadOffice() {
+    final br = (_employeeBranch ?? '').trim();
+    if (br.isEmpty) return false;
+    return br.contains('สำนักงานใหญ่') ||
+        br.contains('สนง.ใหญ่') ||
+        br.contains('สนง ใหญ่') ||
+        br.toUpperCase() == 'HQ' ||
+        br.toUpperCase() == 'HEAD OFFICE';
+  }
+
+  /// นับจำนวนสิทธิหยุดวันเสาร์ที่ใช้แล้วในเดือนเดียวกับ targetDate
+  /// ไม่นับ state = ไม่อนุมัติ / ยกเลิก และไม่นับตัวเองในกรณีแก้ไข
+  int _countSaturdayLeaveInMonth(DateTime targetDate) {
+    int count = 0;
+    for (final leave in _leaves) {
+      if (leave.leaveType != 'สิทธิหยุดวันเสาร์') continue;
+      if (leave.state == 'ไม่อนุมัติ' || leave.state == 'ยกเลิก') continue;
+      // ไม่นับ record ที่กำลังแก้ไข (กันนับซ้ำตัวเอง)
+      if (_editingRequestId != null && leave.id == _editingRequestId) continue;
+      if (leave.leaveStartDate.year == targetDate.year &&
+          leave.leaveStartDate.month == targetDate.month) {
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /// ตรวจกฎสิทธิหยุดวันเสาร์ — โควตา/เดือน ดึงจาก Odoo (saturday.leave.config) ตามสาขา
+  /// ถ้าโหลดโควตาจาก Odoo ไม่ได้ → ใช้กฎ fallback (สนง.ใหญ่ 2 / สาขา 1)
+  /// return null = ผ่าน, return String = มี error
+  String? _checkSaturdayLeaveLimitRule() {
+    if (_selectedLeaveType != 'สิทธิหยุดวันเสาร์') return null;
+    if (_selectedStartDate == null) return null;
+
+    final isHQ = _isHeadOffice();
+    // ✅ ใช้โควตาจาก Odoo ก่อน — ถ้ายังไม่ได้ค่อย fallback กฎเดิม
+    final limit = _saturdayQuota ?? (isHQ ? 2 : 1);
+    final used = _countSaturdayLeaveInMonth(_selectedStartDate!);
+
+    if (used >= limit) {
+      final monthLabel =
+          DateFormat('MMMM yyyy', 'th').format(_selectedStartDate!);
+      return 'พนักงานใช้สิทธิ์หยุดวันเสาร์ได้เดือนละ '
+          '$limit ครั้งเท่านั้น '
+          '(เดือน$monthLabel ใช้ไปแล้ว $used ครั้ง)';
+    }
+    return null;
+  }
+
+  /// ตรวจว่ายังอยู่ในช่วงทดลองงาน (ยังไม่ผ่าน 3 เดือน) หรือไม่
+  /// คืน true ถ้ายังไม่ผ่านโปร, false ถ้าผ่านแล้ว/ไม่มีข้อมูล
+  bool _isInProbation() {
+    final sd = _employeeStartDate;
+    if (sd == null || sd.isEmpty) return false; // ไม่มีข้อมูล → ไม่บล็อก
+    try {
+      final start = DateTime.parse(sd);
+      final now = DateTime.now();
+      // พ้นโปรเมื่อ today >= start + 3 เดือน (Dart auto-normalizes month overflow)
+      final probationEnd =
+          DateTime(start.year, start.month + 3, start.day);
+      return now.isBefore(probationEnd);
+    } catch (e) {
+      debugPrint('⚠️ parse start_date error: $e');
+      return false;
+    }
+  }
+
+  /// ตรวจกฎ: ลากิจได้รับค่าจ้าง ต้องผ่านโปร 3 เดือน
+  /// return null = ผ่าน, return String = มี error
+  String? _checkProbationRule() {
+    if (_selectedLeaveType != 'ลากิจได้รับค่าจ้าง') return null;
+    debugPrint(
+        '🧪 [Probation Check] start_date=$_employeeStartDate → isInProbation=${_isInProbation()}');
+    if (!_isInProbation()) return null;
+
+    // คำนวณวันที่จะพ้นโปรเพื่อแจ้งให้ผู้ใช้ทราบ
+    String hint = '';
+    try {
+      final start = DateTime.parse(_employeeStartDate!);
+      final probationEnd =
+          DateTime(start.year, start.month + 3, start.day);
+      hint =
+          ' (พ้นโปรวันที่ ${DateFormat('d/M/yyyy', 'th').format(probationEnd)})';
+    } catch (_) {}
+
+    return 'พนักงานที่ยังไม่ผ่านทดลองงาน 3 เดือน '
+        'ไม่สามารถใช้สิทธิ์ "ลากิจได้รับค่าจ้าง" ได้$hint';
+  }
+
+  /// ตรวจว่าการลาพักร้อนแจ้งล่วงหน้าเพียงพอหรือไม่ (ต้องอย่างน้อย 3 วัน)
+  /// ตัวอย่าง: ลาวันศุกร์ ต้องขอตั้งแต่วันจันทร์ (4 วันก่อนวันลา)
+  /// return null = ผ่าน, return String = มี error พร้อมข้อความ
+  String? _checkVacationLeadTimeRule() {
+    if (_selectedLeaveType != 'ลาพักร้อน') return null;
+    if (_selectedStartDate == null) return null;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final leaveStart = _dateOnly(_selectedStartDate!);
+    final daysUntilLeave = leaveStart.difference(today).inDays;
+
+    // ต้องห่างอย่างน้อย 4 วัน (เช่น ลาศุกร์ ต้องขอตั้งแต่จันทร์)
+    if (daysUntilLeave < 4) {
+      return 'ลาพักร้อนต้องแจ้งล่วงหน้าอย่างน้อย 3 วัน '
+          '(เช่น ลาวันศุกร์ ต้องขอตั้งแต่วันจันทร์)';
+    }
+    return null;
+  }
+
+  /// ตรวจว่าช่วงลาตรงกับวันทำงานติดวันหยุดยาวหรือไม่
+  /// return null = ผ่าน, return String = มี error พร้อมข้อความ
+  String? _checkLongHolidayRule() {
+    if (_selectedStartDate == null || _selectedEndDate == null) return null;
+    if (_selectedLeaveType == null) return null;
+    // ยกเว้น: ลากิจไม่ได้รับค่าจ้าง + ลาป่วยมีใบรับรองแพทย์ + สิทธิหยุดวันเสาร์
+    if (_exemptLeaveTypes.contains(_selectedLeaveType)) {
+      debugPrint('⏭️ Skip holiday check: exempt type "$_selectedLeaveType"');
+      return null;
+    }
+    if (_longHolidayRanges.isEmpty) {
+      debugPrint('⚠️ Skip holiday check: no long holiday data loaded');
+      return null;
+    }
+    debugPrint(
+        '🔎 Check holiday rule: type=$_selectedLeaveType start=$_selectedStartDate end=$_selectedEndDate, ranges=${_longHolidayRanges.length}');
+
+    final leaveStart = _dateOnly(_selectedStartDate!);
+    final leaveEnd = _dateOnly(_selectedEndDate!);
+
+    for (final range in _longHolidayRanges) {
+      final holidayStart = range.first;
+      final holidayEnd = range.last;
+
+      final workingBefore = _findWorkingDayBefore(holidayStart);
+      final workingAfter = _findWorkingDayAfter(holidayEnd);
+
+      for (final target in [workingBefore, workingAfter]) {
+        if (target == null) continue;
+        // ช่วงลาครอบคลุม target หรือไม่?
+        if (!leaveStart.isAfter(target) && !leaveEnd.isBefore(target)) {
+          final fmt = DateFormat('d/M/yyyy');
+          return 'ห้ามลาหลังวันหยุดยาว (วันหยุด ${fmt.format(holidayStart)} - ${fmt.format(holidayEnd)})';
+        }
+      }
+    }
+    return null;
+  }
+
   Future<void> _fetchLeaveHistory() async {
     if (mounted) {
       setState(() {
@@ -550,8 +933,23 @@ class LeaveScreenState extends State<LeaveScreen> {
         _selectedEndDate == null) {
       setState(() {
         _isLeaveDurationExceeded = false;
+        _holidayRuleError = null;
       });
       return;
+    }
+
+    // ✅ ตรวจวันหยุดยาวก่อน (ถ้าติดให้บล็อก)
+    final holidayErr = _checkLongHolidayRule();
+    if (holidayErr != null) {
+      setState(() {
+        _holidayRuleError = holidayErr;
+        _isLeaveDurationExceeded = true;
+      });
+      return;
+    } else {
+      setState(() {
+        _holidayRuleError = null;
+      });
     }
 
     setState(() {
@@ -648,10 +1046,49 @@ class LeaveScreenState extends State<LeaveScreen> {
 
   // Function to submit leave request form
   Future<void> _submitForm() async {
+    // ✅ ตรวจกฎวันหยุดยาวก่อน (double-guard ก่อนส่ง)
+    final holidayErr = _checkLongHolidayRule();
+    if (holidayErr != null) {
+      _showSnackBar(holidayErr, isError: true);
+      return;
+    }
+
+    // ✅ ตรวจกฎลาพักร้อนต้องแจ้งล่วงหน้าอย่างน้อย 3 วัน
+    final vacationErr = _checkVacationLeadTimeRule();
+    if (vacationErr != null) {
+      _showSnackBar(vacationErr, isError: true);
+      return;
+    }
+
+    // ✅ ตรวจกฎลากิจได้รับค่าจ้าง ต้องผ่านโปร 3 เดือน
+    // หากยังไม่มีข้อมูล start_date → ลองโหลดจาก Odoo อีกรอบก่อน
+    if (_selectedLeaveType == 'ลากิจได้รับค่าจ้าง' &&
+        (_employeeStartDate == null || _employeeStartDate!.isEmpty)) {
+      await _loadEmployeeStartDate();
+    }
+    final probationErr = _checkProbationRule();
+    if (probationErr != null) {
+      _showSnackBar(probationErr, isError: true);
+      return;
+    }
+
+    // ✅ ตรวจกฎสิทธิหยุดวันเสาร์: สนง.ใหญ่ 2 ครั้ง/เดือน, สาขา 1 ครั้ง/เดือน
+    // ถ้ายังไม่มีข้อมูล branch → ลองโหลดจาก Odoo อีกรอบ
+    if (_selectedLeaveType == 'สิทธิหยุดวันเสาร์' &&
+        (_employeeBranch == null || _employeeBranch!.isEmpty)) {
+      await _loadEmployeeStartDate();
+    }
+    final saturdayErr = _checkSaturdayLeaveLimitRule();
+    if (saturdayErr != null) {
+      _showSnackBar(saturdayErr, isError: true);
+      return;
+    }
+
     // Check if leave duration exceeds before submitting
     if (_isLeaveDurationExceeded) {
       _showSnackBar(
-          'ไม่สามารถบันทึกคำขอได้เนื่องจากจำนวนวันลาเกินสิทธิ์ที่เหลือ',
+          _holidayRuleError ??
+              'ไม่สามารถบันทึกคำขอได้เนื่องจากจำนวนวันลาเกินสิทธิ์ที่เหลือ',
           isError: true);
       return;
     }
@@ -662,6 +1099,32 @@ class LeaveScreenState extends State<LeaveScreen> {
     if (_selectedLeaveType == null || _selectedLeaveType!.isEmpty) {
       _showSnackBar('กรุณาเลือกประเภทการลา', isError: true);
       return;
+    }
+
+    // ✅ บังคับแนบไฟล์เมื่อเลือก "ลาป่วยมีใบรับรองแพทย์"
+    if (_selectedLeaveType == 'ลาป่วยมีใบรับรองแพทย์') {
+      final hasPicked = _pickedFile != null;
+      final hasExisting =
+          _existingFilePath != null && _existingFilePath!.isNotEmpty;
+      if (!hasPicked && !hasExisting) {
+        _showSnackBar(
+            'กรุณาแนบไฟล์ใบรับรองแพทย์สำหรับการลาป่วยมีใบรับรองแพทย์',
+            isError: true);
+        return;
+      }
+    }
+
+    // ✅ บังคับแนบไฟล์เมื่อเลือก "ฉุกเฉิน" (ใบมรณะบัตรของพ่อ/แม่เท่านั้น)
+    if (_selectedLeaveType == 'ฉุกเฉิน') {
+      final hasPicked = _pickedFile != null;
+      final hasExisting =
+          _existingFilePath != null && _existingFilePath!.isNotEmpty;
+      if (!hasPicked && !hasExisting) {
+        _showSnackBar(
+            'กรุณาแนบใบมรณะบัตรของบิดา/มารดา (ลาฉุกเฉินใช้ได้กรณีบิดา-มารดาเสียชีวิตเท่านั้น)',
+            isError: true);
+        return;
+      }
     }
 
     setState(() {
@@ -821,19 +1284,19 @@ class LeaveScreenState extends State<LeaveScreen> {
       barrierDismissible: false, // user must tap button!
       builder: (BuildContext context) {
         return AlertDialog(
-          title: Text('ยืนยันการยกเลิกคำขอลา', style: GoogleFonts.kanit()),
+          title: Text('ยืนยันการยกเลิกคำขอลา', style: GoogleFonts.ibmPlexSansThai()),
           content: SingleChildScrollView(
             child: ListBody(
               children: <Widget>[
                 Text('คุณต้องการยกเลิกคำขอลาใช่หรือไม่?',
-                    style: GoogleFonts.kanit()),
+                    style: GoogleFonts.ibmPlexSansThai()),
               ],
             ),
           ),
           actions: <Widget>[
             TextButton(
               child:
-                  Text('ไม่ใช่', style: GoogleFonts.kanit(color: Colors.grey)),
+                  Text('ไม่ใช่', style: GoogleFonts.ibmPlexSansThai(color: Colors.grey)),
               onPressed: () {
                 Navigator.of(context).pop(); // Close the dialog
               },
@@ -841,7 +1304,7 @@ class LeaveScreenState extends State<LeaveScreen> {
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
               child: Text('ใช่, ยกเลิกเลย',
-                  style: GoogleFonts.kanit(color: Colors.white)),
+                  style: GoogleFonts.ibmPlexSansThai(color: Colors.white)),
               onPressed: () {
                 Navigator.of(context).pop(); // Close the dialog
                 _cancelLeaveRequest(leaveId); // Call the cancel function
@@ -965,14 +1428,45 @@ class LeaveScreenState extends State<LeaveScreen> {
   // Functions for date and time selection (Correctly placed within the State class)
   Future<void> _selectDate(BuildContext context,
       {required bool isStartDate}) async {
+    // ✅ ถ้าเลือก "ลาพักร้อน" + เป็นวันเริ่มต้น → บังคับ firstDate ให้เลือกได้แค่ 4 วันข้างหน้าขึ้นไป
+    DateTime firstDate = DateTime(2000);
+    if (isStartDate && _selectedLeaveType == 'ลาพักร้อน') {
+      final now = DateTime.now();
+      firstDate = DateTime(now.year, now.month, now.day)
+          .add(const Duration(days: 4));
+    }
+
+    // ปรับ initialDate ให้ไม่ก่อน firstDate
+    DateTime initialDate = isStartDate
+        ? (_selectedStartDate ?? DateTime.now())
+        : (_selectedEndDate ?? DateTime.now());
+    if (initialDate.isBefore(firstDate)) initialDate = firstDate;
+
     final DateTime? picked = await showDatePicker(
       context: context,
-      initialDate: isStartDate
-          ? (_selectedStartDate ?? DateTime.now())
-          : (_selectedEndDate ?? DateTime.now()),
-      firstDate: DateTime(2000),
+      initialDate: initialDate,
+      firstDate: firstDate,
       lastDate: DateTime.now().add(const Duration(days: 365)),
       locale: const Locale('th', 'TH'),
+      cancelText: 'ยกเลิก',
+      confirmText: 'ตกลง',
+      builder: (BuildContext context, Widget? child) {
+        // บังคับใช้ Material 2 + คง font/สีของแอปไว้ — เพื่อให้ปุ่ม OK/Cancel แสดงชัดเจน
+        final base = ThemeData.light(useMaterial3: false);
+        return Theme(
+          data: base.copyWith(
+            colorScheme: ColorScheme.light(
+              primary: Theme.of(context).primaryColor,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: Colors.black87,
+            ),
+            textTheme:
+                GoogleFonts.ibmPlexSansThaiTextTheme(base.textTheme),
+          ),
+          child: child!,
+        );
+      },
     );
     if (picked != null) {
       setState(() {
@@ -1002,29 +1496,129 @@ class LeaveScreenState extends State<LeaveScreen> {
 
   Future<void> _selectTime(BuildContext context,
       {required bool isStartTime}) async {
-    final TimeOfDay? picked = await showTimePicker(
-      context: context,
-      initialTime: isStartTime
-          ? (_selectedStartTime ?? TimeOfDay.now())
-          : (_selectedEndTime ?? TimeOfDay.now()),
-      builder: (BuildContext context, Widget? child) {
-        return MediaQuery(
-          data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
-          child: child!,
-        );
-      },
-    );
+    final TimeOfDay initial = isStartTime
+        ? (_selectedStartTime ?? TimeOfDay.now())
+        : (_selectedEndTime ?? TimeOfDay.now());
+
+    final TimeOfDay? picked = await _showSimpleTimePicker(context, initial);
+
     if (picked != null) {
+      final hh = picked.hour.toString().padLeft(2, '0');
+      final mm = picked.minute.toString().padLeft(2, '0');
+      final newText = '$hh:$mm';
       setState(() {
         if (isStartTime) {
           _selectedStartTime = picked;
-          _startTimeController.text = _formatTimeOfDayToString(picked);
+          _startTimeController.value = TextEditingValue(
+            text: newText,
+            selection: TextSelection.collapsed(offset: newText.length),
+          );
         } else {
           _selectedEndTime = picked;
-          _endTimeController.text = _formatTimeOfDayToString(picked);
+          _endTimeController.value = TextEditingValue(
+            text: newText,
+            selection: TextSelection.collapsed(offset: newText.length),
+          );
         }
       });
     }
+  }
+
+  // Time picker แบบ custom — Dropdown ชั่วโมง+นาที พร้อมปุ่ม OK/Cancel ชัดเจน
+  // (แทน showTimePicker ของ Material ที่ปุ่มหายเพราะ theme override)
+  Future<TimeOfDay?> _showSimpleTimePicker(
+      BuildContext context, TimeOfDay initial) async {
+    int hour = initial.hour;
+    int minute = initial.minute;
+    return showDialog<TimeOfDay>(
+      context: context,
+      builder: (BuildContext ctx) {
+        return StatefulBuilder(
+          builder: (context, setStateDialog) {
+            return AlertDialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              title: Text('เลือกเวลา',
+                  style: GoogleFonts.ibmPlexSansThai(
+                      fontWeight: FontWeight.bold)),
+              content: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: DropdownButtonFormField<int>(
+                      value: hour,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: 'ชั่วโมง',
+                        labelStyle: GoogleFonts.ibmPlexSansThai(),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      items: List.generate(24, (i) {
+                        return DropdownMenuItem<int>(
+                          value: i,
+                          child: Text(i.toString().padLeft(2, '0'),
+                              style:
+                                  GoogleFonts.ibmPlexSansThai(fontSize: 16)),
+                        );
+                      }),
+                      onChanged: (v) {
+                        if (v != null) setStateDialog(() => hour = v);
+                      },
+                    ),
+                  ),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 6),
+                    child: Text(':',
+                        style: TextStyle(
+                            fontSize: 20, fontWeight: FontWeight.bold)),
+                  ),
+                  Expanded(
+                    child: DropdownButtonFormField<int>(
+                      value: minute,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: 'นาที',
+                        labelStyle: GoogleFonts.ibmPlexSansThai(),
+                        border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                      ),
+                      items: List.generate(60, (i) {
+                        return DropdownMenuItem<int>(
+                          value: i,
+                          child: Text(i.toString().padLeft(2, '0'),
+                              style:
+                                  GoogleFonts.ibmPlexSansThai(fontSize: 16)),
+                        );
+                      }),
+                      onChanged: (v) {
+                        if (v != null) setStateDialog(() => minute = v);
+                      },
+                    ),
+                  ),
+                ],
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.of(ctx).pop(),
+                  child: Text('ยกเลิก',
+                      style: GoogleFonts.ibmPlexSansThai(
+                          color: Colors.grey.shade700)),
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.check),
+                  label:
+                      Text('ตกลง', style: GoogleFonts.ibmPlexSansThai()),
+                  onPressed: () => Navigator.of(ctx)
+                      .pop(TimeOfDay(hour: hour, minute: minute)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
   }
 
   @override
@@ -1103,7 +1697,7 @@ class LeaveScreenState extends State<LeaveScreen> {
                                       _editingRequestId != null
                                           ? '✏️ แก้ไขคำขอลา'
                                           : '📝 บันทึกคำขอลา',
-                                      style: GoogleFonts.kanit(
+                                      style: GoogleFonts.ibmPlexSansThai(
                                         fontSize: 20,
                                         fontWeight: FontWeight.bold,
                                         color: Theme.of(context).primaryColor,
@@ -1115,7 +1709,7 @@ class LeaveScreenState extends State<LeaveScreen> {
                                         icon: const Icon(Icons.cancel_outlined,
                                             size: 18, color: Colors.grey),
                                         label: Text('ยกเลิก',
-                                            style: GoogleFonts.kanit(
+                                            style: GoogleFonts.ibmPlexSansThai(
                                                 color: Colors.grey)),
                                       ),
                                   ],
@@ -1128,7 +1722,7 @@ class LeaveScreenState extends State<LeaveScreen> {
                                       _selectDate(context, isStartDate: true),
                                   decoration: InputDecoration(
                                     labelText: 'วันที่ลาเริ่มต้น',
-                                    labelStyle: GoogleFonts.kanit(),
+                                    labelStyle: GoogleFonts.ibmPlexSansThai(),
                                     prefixIcon: const Icon(
                                         Icons.calendar_today_outlined),
                                     border: OutlineInputBorder(
@@ -1151,7 +1745,7 @@ class LeaveScreenState extends State<LeaveScreen> {
                                       _selectTime(context, isStartTime: true),
                                   decoration: InputDecoration(
                                     labelText: 'เวลาที่ลาเริ่มต้น',
-                                    labelStyle: GoogleFonts.kanit(),
+                                    labelStyle: GoogleFonts.ibmPlexSansThai(),
                                     prefixIcon: const Icon(Icons.access_time),
                                     border: OutlineInputBorder(
                                         borderRadius: BorderRadius.circular(8)),
@@ -1173,7 +1767,7 @@ class LeaveScreenState extends State<LeaveScreen> {
                                       _selectDate(context, isStartDate: false),
                                   decoration: InputDecoration(
                                     labelText: 'วันที่ลาสิ้นสุด',
-                                    labelStyle: GoogleFonts.kanit(),
+                                    labelStyle: GoogleFonts.ibmPlexSansThai(),
                                     prefixIcon: const Icon(
                                         Icons.calendar_today_outlined),
                                     border: OutlineInputBorder(
@@ -1196,7 +1790,7 @@ class LeaveScreenState extends State<LeaveScreen> {
                                       _selectTime(context, isStartTime: false),
                                   decoration: InputDecoration(
                                     labelText: 'เวลาที่ลาสิ้นสุด',
-                                    labelStyle: GoogleFonts.kanit(),
+                                    labelStyle: GoogleFonts.ibmPlexSansThai(),
                                     prefixIcon: const Icon(Icons.access_time),
                                     border: OutlineInputBorder(
                                         borderRadius: BorderRadius.circular(8)),
@@ -1215,7 +1809,7 @@ class LeaveScreenState extends State<LeaveScreen> {
                                   value: _selectedLeaveType,
                                   decoration: InputDecoration(
                                     labelText: 'ประเภทการลา',
-                                    labelStyle: GoogleFonts.kanit(),
+                                    labelStyle: GoogleFonts.ibmPlexSansThai(),
                                     prefixIcon:
                                         const Icon(Icons.category_outlined),
                                     border: OutlineInputBorder(
@@ -1227,12 +1821,71 @@ class LeaveScreenState extends State<LeaveScreen> {
                                     return DropdownMenuItem<String>(
                                       value: type,
                                       child: Text(type,
-                                          style: GoogleFonts.kanit()),
+                                          style: GoogleFonts.ibmPlexSansThai()),
                                     );
                                   }).toList(),
                                   onChanged: (String? newValue) {
                                     setState(() {
                                       _selectedLeaveType = newValue;
+
+                                      // ✅ ถ้าเปลี่ยนเป็น "ลาพักร้อน" และวันที่เลือกไว้ไม่ผ่านเงื่อนไข 3 วัน → ล้างวันที่
+                                      if (newValue == 'ลาพักร้อน' &&
+                                          _selectedStartDate != null) {
+                                        final now = DateTime.now();
+                                        final today = DateTime(
+                                            now.year, now.month, now.day);
+                                        final daysUntil = _dateOnly(
+                                                _selectedStartDate!)
+                                            .difference(today)
+                                            .inDays;
+                                        if (daysUntil < 4) {
+                                          _selectedStartDate = null;
+                                          _selectedEndDate = null;
+                                          _startDateController.clear();
+                                          _endDateController.clear();
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                            _showSnackBar(
+                                                'ลาพักร้อนต้องแจ้งล่วงหน้าอย่างน้อย 3 วัน — กรุณาเลือกวันที่ใหม่',
+                                                isError: true);
+                                          });
+                                        }
+                                      }
+
+                                      // ✅ ถ้าเปลี่ยนเป็น "ลากิจได้รับค่าจ้าง" และยังไม่ผ่านโปร → แจ้งทันที
+                                      if (newValue == 'ลากิจได้รับค่าจ้าง' &&
+                                          _isInProbation()) {
+                                        final probationErr =
+                                            _checkProbationRule();
+                                        if (probationErr != null) {
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                            _showSnackBar(probationErr,
+                                                isError: true);
+                                          });
+                                        }
+                                      }
+
+                                      // ✅ ถ้าเปลี่ยนเป็น "สิทธิหยุดวันเสาร์" และโควตาเดือนนั้นเต็มแล้ว → แจ้งทันที
+                                      if (newValue == 'สิทธิหยุดวันเสาร์') {
+                                        final saturdayErr =
+                                            _checkSaturdayLeaveLimitRule();
+                                        if (saturdayErr != null) {
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                            _showSnackBar(saturdayErr,
+                                                isError: true);
+                                          });
+                                        }
+                                      }
+
+                                      // ✅ ถ้าเปลี่ยนเป็น "ฉุกเฉิน" → แจ้งเงื่อนไข + บังคับแนบใบมรณะบัตร
+                                      if (newValue == 'ฉุกเฉิน') {
+                                        WidgetsBinding.instance
+                                            .addPostFrameCallback((_) {
+                                          _showEmergencyLeaveDialog();
+                                        });
+                                      }
                                     });
                                     _checkLeaveAllowance(); // เรียกใช้ check function เมื่อเปลี่ยนประเภทการลา
                                   },
@@ -1244,22 +1897,137 @@ class LeaveScreenState extends State<LeaveScreen> {
                                   },
                                 ),
                                 const SizedBox(height: 16),
-                                // แสดงข้อความแจ้งเตือนเมื่อลาเกิน
+                                // ✅ แสดง warning ถาวรเมื่อเลือก "ฉุกเฉิน"
+                                if (_selectedLeaveType == 'ฉุกเฉิน')
+                                  Container(
+                                    margin: const EdgeInsets.only(bottom: 16),
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.orange.shade50,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border: Border.all(
+                                          color: Colors.orange.shade300),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Icon(Icons.warning_amber_rounded,
+                                            color: Colors.orange.shade800,
+                                            size: 22),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                'ลาฉุกเฉินใช้ได้เฉพาะกรณี บิดา/มารดา เสียชีวิตเท่านั้น',
+                                                style: GoogleFonts
+                                                    .ibmPlexSansThai(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w600,
+                                                  color: Colors.orange.shade900,
+                                                ),
+                                              ),
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                '⚠️ จำเป็นต้องแนบใบมรณะบัตรประกอบ',
+                                                style: GoogleFonts
+                                                    .ibmPlexSansThai(
+                                                  fontSize: 12,
+                                                  color: Colors.red.shade700,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                // ✅ แสดงสิทธิหยุดวันเสาร์ที่มี / ใช้ไปแล้ว เมื่อเลือกประเภทนี้
+                                if (_selectedLeaveType == 'สิทธิหยุดวันเสาร์')
+                                  Container(
+                                    margin: const EdgeInsets.only(bottom: 16),
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: Colors.blue.shade50,
+                                      borderRadius: BorderRadius.circular(8),
+                                      border:
+                                          Border.all(color: Colors.blue.shade200),
+                                    ),
+                                    child: Row(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Icon(Icons.info_outline,
+                                            color: Colors.blue.shade700,
+                                            size: 22),
+                                        const SizedBox(width: 8),
+                                        Expanded(
+                                          child: Builder(
+                                            builder: (context) {
+                                              final limit = _saturdayQuota ??
+                                                  (_isHeadOffice() ? 2 : 1);
+                                              final used = _selectedStartDate !=
+                                                      null
+                                                  ? _countSaturdayLeaveInMonth(
+                                                      _selectedStartDate!)
+                                                  : 0;
+                                              final remain = (limit - used) < 0
+                                                  ? 0
+                                                  : (limit - used);
+                                              return Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                                  Text(
+                                                    'สิทธิหยุดวันเสาร์: $limit ครั้ง/เดือน',
+                                                    style: GoogleFonts
+                                                        .ibmPlexSansThai(
+                                                      fontSize: 13,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      color:
+                                                          Colors.blue.shade900,
+                                                    ),
+                                                  ),
+                                                  const SizedBox(height: 4),
+                                                  Text(
+                                                    'ใช้ไปแล้ว $used ครั้ง • คงเหลือ $remain ครั้ง'
+                                                    '${_selectedStartDate != null ? ' (เดือน${DateFormat('MMMM yyyy', 'th').format(_selectedStartDate!)})' : ''}',
+                                                    style: GoogleFonts
+                                                        .ibmPlexSansThai(
+                                                      fontSize: 12,
+                                                      color:
+                                                          Colors.grey.shade700,
+                                                    ),
+                                                  ),
+                                                ],
+                                              );
+                                            },
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                // แสดงข้อความแจ้งเตือนเมื่อลาเกิน / ติดวันหยุดยาว
                                 if (_isLeaveDurationExceeded)
                                   Padding(
                                     padding:
                                         const EdgeInsets.only(bottom: 16.0),
                                     child: Text(
-                                      'ไม่สามารถบันทึกคำขอได้เนื่องจากจำนวนวันลาเกินสิทธิ์ที่เหลือ',
-                                      style:
-                                          GoogleFonts.kanit(color: Colors.red),
+                                      _holidayRuleError ??
+                                          'ไม่สามารถบันทึกคำขอได้เนื่องจากจำนวนวันลาเกินสิทธิ์ที่เหลือ',
+                                      style: GoogleFonts.ibmPlexSansThai(
+                                          color: Colors.red),
                                     ),
                                   ),
                                 TextFormField(
                                   controller: _noteController,
                                   decoration: InputDecoration(
                                     labelText: 'หมายเหตุ (ถ้ามี)',
-                                    labelStyle: GoogleFonts.kanit(),
+                                    labelStyle: GoogleFonts.ibmPlexSansThai(),
                                     prefixIcon:
                                         const Icon(Icons.note_alt_outlined),
                                     border: OutlineInputBorder(
@@ -1283,12 +2051,19 @@ class LeaveScreenState extends State<LeaveScreen> {
                                       color: Colors.grey.shade50,
                                       borderRadius: BorderRadius.circular(8),
                                       border: Border.all(
-                                          color: Colors.grey.shade300),
+                                          color: _selectedLeaveType ==
+                                                      'ลาป่วยมีใบรับรองแพทย์' &&
+                                                  _pickedFile == null &&
+                                                  (_existingFilePath == null ||
+                                                      _existingFilePath!
+                                                          .isEmpty)
+                                              ? Colors.red.shade400
+                                              : Colors.grey.shade300),
                                     ),
                                     child: Row(
                                       children: [
                                         const Icon(Icons.attach_file,
-                                            color: Colors.blue),
+                                            color: const Color(0xFF1A1A1A)),
                                         const SizedBox(width: 10),
                                         Expanded(
                                           child: Text(
@@ -1298,9 +2073,20 @@ class LeaveScreenState extends State<LeaveScreen> {
                                                         _existingFilePath!
                                                             .isNotEmpty
                                                     ? 'ไฟล์เดิม: ${Uri.parse(_existingFilePath!).pathSegments.last}'
-                                                    : '📎 แนบไฟล์ (รูปภาพ)'),
-                                            style: GoogleFonts.kanit(
-                                                color: Colors.grey.shade700),
+                                                    : (_selectedLeaveType ==
+                                                            'ลาป่วยมีใบรับรองแพทย์'
+                                                        ? '📎 แนบใบรับรองแพทย์ *(บังคับ)'
+                                                        : '📎 แนบไฟล์ (รูปภาพ)')),
+                                            style: GoogleFonts.ibmPlexSansThai(
+                                                color: _selectedLeaveType ==
+                                                            'ลาป่วยมีใบรับรองแพทย์' &&
+                                                        _pickedFile == null &&
+                                                        (_existingFilePath ==
+                                                                null ||
+                                                            _existingFilePath!
+                                                                .isEmpty)
+                                                    ? Colors.red.shade700
+                                                    : Colors.grey.shade700),
                                             overflow: TextOverflow.ellipsis,
                                           ),
                                         ),
@@ -1321,9 +2107,9 @@ class LeaveScreenState extends State<LeaveScreen> {
                                         },
                                         icon: const Icon(Icons.image, size: 18),
                                         label: Text('ดูไฟล์เดิม',
-                                            style: GoogleFonts.kanit()),
+                                            style: GoogleFonts.ibmPlexSansThai()),
                                         style: TextButton.styleFrom(
-                                          foregroundColor: Colors.blue.shade700,
+                                          foregroundColor: const Color(0xFF1A1A1A),
                                         ),
                                       ),
                                     ),
@@ -1343,7 +2129,7 @@ class LeaveScreenState extends State<LeaveScreen> {
                                         _editingRequestId != null
                                             ? 'อัปเดตคำขอ'
                                             : 'บันทึกคำขอ',
-                                        style: GoogleFonts.kanit(
+                                        style: GoogleFonts.ibmPlexSansThai(
                                             fontSize: 16,
                                             fontWeight: FontWeight.bold)),
                                     style: ElevatedButton.styleFrom(
@@ -1372,7 +2158,7 @@ class LeaveScreenState extends State<LeaveScreen> {
                       const SizedBox(height: 32),
                       Text(
                         '📜 ประวัติการลา 7 (ล่าสุด)',
-                        style: GoogleFonts.kanit(
+                        style: GoogleFonts.ibmPlexSansThai(
                             fontSize: 18, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 16),
@@ -1382,7 +2168,7 @@ class LeaveScreenState extends State<LeaveScreen> {
                                 padding: const EdgeInsets.all(24.0),
                                 child: Text(
                                   'ไม่มีข้อมูลการลา',
-                                  style: GoogleFonts.kanit(
+                                  style: GoogleFonts.ibmPlexSansThai(
                                       fontSize: 16,
                                       color: Colors.grey.shade600),
                                 ),
@@ -1394,200 +2180,169 @@ class LeaveScreenState extends State<LeaveScreen> {
                               itemCount: _leaves.length,
                               itemBuilder: (context, index) {
                                 final leave = _leaves[index];
-                                return Card(
-                                  margin:
-                                      const EdgeInsets.symmetric(vertical: 8),
-                                  elevation: 2,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                    side: BorderSide(
-                                        color: _getStateBackgroundColor(
-                                            leave.state)),
-                                  ),
-                                  child: Container(
-                                    decoration: BoxDecoration(
-                                      color:
-                                          _getStateBackgroundColor(leave.state),
-                                      borderRadius: BorderRadius.circular(12),
-                                    ),
-                                    child: Padding(
-                                      padding: const EdgeInsets.all(16.0),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
+                                final dateLabel = leave.leaveStartDate ==
+                                        leave.leaveEndDate
+                                    ? _formatThaiDate(leave.leaveStartDate)
+                                    : '${_formatThaiDate(leave.leaveStartDate)} - ${_formatThaiDate(leave.leaveEndDate)}';
+                                return ExpandableHistoryCard(
+                                  leadingIcon:
+                                      Icons.event_note_rounded,
+                                  accentColor: _getStateColor(leave.state),
+                                  dateLabel: dateLabel,
+                                  typeLabel: leave.leaveType,
+                                  status: leave.state,
+                                  statusColor: _getStateColor(leave.state),
+                                  details: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'เวลาเริ่ม: ${_formatTimeOfDayToString(leave.leaveStartTime)} น.  |  สิ้นสุด: ${_formatTimeOfDayToString(leave.leaveEndTime)} น.',
+                                        style: GoogleFonts.ibmPlexSansThai(
+                                            fontSize: 13,
+                                            color: Colors.grey.shade800),
+                                      ),
+                                      if (leave.note != null &&
+                                          leave.note!.isNotEmpty)
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.only(top: 4),
+                                          child: Text(
+                                            'หมายเหตุ: ${leave.note}',
+                                            style:
+                                                GoogleFonts.ibmPlexSansThai(
+                                                    fontSize: 13,
+                                                    fontStyle:
+                                                        FontStyle.italic,
+                                                    color: Colors
+                                                        .grey.shade700),
+                                          ),
+                                        ),
+                                      if (leave.department != null &&
+                                          leave.department!.isNotEmpty)
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.only(top: 4),
+                                          child: Text(
+                                            'แผนก: ${leave.department}',
+                                            style:
+                                                GoogleFonts.ibmPlexSansThai(
+                                                    fontSize: 13,
+                                                    color: Colors
+                                                        .grey.shade800),
+                                          ),
+                                        ),
+                                      if (leave.position != null &&
+                                          leave.position!.isNotEmpty)
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.only(top: 4),
+                                          child: Text(
+                                            'ตำแหน่ง: ${leave.position}',
+                                            style:
+                                                GoogleFonts.ibmPlexSansThai(
+                                                    fontSize: 13,
+                                                    color: Colors
+                                                        .grey.shade800),
+                                          ),
+                                        ),
+                                      if (leave.reason != null &&
+                                          leave.reason!.isNotEmpty)
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.only(top: 6),
+                                          child: Text(
+                                            'เหตุผล (ไม่อนุมัติ): ${leave.reason}',
+                                            style:
+                                                GoogleFonts.ibmPlexSansThai(
+                                                    fontSize: 13,
+                                                    fontStyle:
+                                                        FontStyle.italic,
+                                                    color: Colors
+                                                        .red.shade800),
+                                          ),
+                                        ),
+                                      if (leave.approvedBy != null &&
+                                          leave.approverFirstname != null &&
+                                          leave.approverLastname != null)
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.only(top: 6),
+                                          child: Text(
+                                            'อนุมัติโดย: ${leave.approverFirstname} ${leave.approverLastname}',
+                                            style:
+                                                GoogleFonts.ibmPlexSansThai(
+                                                    fontSize: 13,
+                                                    color: Colors
+                                                        .grey.shade700),
+                                          ),
+                                        ),
+                                      if (leave.approvedAt != null)
+                                        Text(
+                                          'เมื่อ: ${DateFormat('d/M/yyyy HH:mm', 'th').format(leave.approvedAt!)}',
+                                          style: GoogleFonts.ibmPlexSansThai(
+                                              fontSize: 13,
+                                              color: Colors.grey.shade700),
+                                        ),
+                                      const SizedBox(height: 10),
+                                      Wrap(
+                                        spacing: 8.0,
+                                        runSpacing: 4.0,
+                                        alignment: WrapAlignment.end,
                                         children: [
-                                          Row(
-                                            mainAxisAlignment:
-                                                MainAxisAlignment.spaceBetween,
-                                            children: [
-                                              Text(
-                                                '📅 ${_formatThaiDate(leave.leaveStartDate)}' +
-                                                    (leave.leaveStartDate !=
-                                                            leave.leaveEndDate
-                                                        ? '\nถึง ${_formatThaiDate(leave.leaveEndDate)}'
-                                                        : ''),
-                                                style: GoogleFonts.kanit(
-                                                    fontSize: 16,
-                                                    fontWeight: FontWeight.bold,
-                                                    color: Theme.of(context)
-                                                        .primaryColor),
-                                              ),
-                                              Container(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                        horizontal: 8,
-                                                        vertical: 4),
-                                                decoration: BoxDecoration(
-                                                  color: _getStateColor(
-                                                      leave.state),
-                                                  borderRadius:
-                                                      BorderRadius.circular(8),
-                                                ),
-                                                child: Text(
-                                                  leave.state,
-                                                  style: GoogleFonts.kanit(
-                                                      color: Colors.white,
-                                                      fontSize: 12,
-                                                      fontWeight:
-                                                          FontWeight.bold),
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                          const SizedBox(height: 8),
-                                          Text(
-                                            '✅ เริ่ม: ${_formatTimeOfDayToString(leave.leaveStartTime)} น. | ⛔ สิ้นสุด: ${_formatTimeOfDayToString(leave.leaveEndTime)} น.',
-                                            style: GoogleFonts.kanit(
-                                                fontSize: 14,
-                                                color: Colors.grey.shade800),
-                                          ),
-                                          Text(
-                                            '🏷️ ${leave.leaveType}',
-                                            style: GoogleFonts.kanit(
-                                                fontSize: 14,
-                                                color: Colors.grey.shade800),
-                                          ),
-                                          if (leave.note != null &&
-                                              leave.note!.isNotEmpty)
-                                            Text(
-                                              '📝 หมายเหตุ: ${leave.note}',
-                                              style: GoogleFonts.kanit(
-                                                  fontSize: 14,
-                                                  fontStyle: FontStyle.italic,
-                                                  color: Colors.grey.shade700),
-                                            ),
-                                          if (leave.department != null &&
-                                              leave.department!.isNotEmpty)
-                                            Text(
-                                              'แผนก: ${leave.department}',
-                                              style: GoogleFonts.kanit(
-                                                  fontSize: 14,
-                                                  color: Colors.grey.shade800),
-                                            ),
-                                          if (leave.position != null &&
-                                              leave.position!.isNotEmpty)
-                                            Text(
-                                              'ตำแหน่ง: ${leave.position}',
-                                              style: GoogleFonts.kanit(
-                                                  fontSize: 14,
-                                                  color: Colors.grey.shade800),
-                                            ),
-                                          if (leave.reason != null &&
-                                              leave.reason!.isNotEmpty)
-                                            Padding(
-                                              padding: const EdgeInsets.only(
-                                                  top: 8.0),
-                                              child: Text(
-                                                'เหตุผล (ไม่อนุมัติ): ${leave.reason}',
-                                                style: GoogleFonts.kanit(
-                                                    fontSize: 14,
-                                                    fontStyle: FontStyle.italic,
-                                                    color: Colors.red.shade800),
+                                          if (leave.filePath != null &&
+                                              leave.filePath!.isNotEmpty &&
+                                              (leave.state == 'รออนุมัติ' ||
+                                                  leave.state == 'อนุมัติ' ||
+                                                  leave.state ==
+                                                      'ไม่อนุมัติ'))
+                                            TextButton.icon(
+                                              onPressed: () async {
+                                                await _openFileUrl(
+                                                    leave.filePath);
+                                              },
+                                              icon: const Icon(Icons.image,
+                                                  size: 18),
+                                              label: Text('ดูไฟล์แนบ',
+                                                  style: GoogleFonts
+                                                      .ibmPlexSansThai()),
+                                              style: TextButton.styleFrom(
+                                                foregroundColor:
+                                                    const Color(0xFF1A1A1A),
                                               ),
                                             ),
-                                          if (leave.approvedBy != null &&
-                                              leave.approverFirstname != null &&
-                                              leave.approverLastname != null)
-                                            Padding(
-                                              padding: const EdgeInsets.only(
-                                                  top: 8.0),
-                                              child: Text(
-                                                'อนุมัติโดย: ${leave.approverFirstname} ${leave.approverLastname}',
-                                                style: GoogleFonts.kanit(
-                                                    fontSize: 14,
-                                                    color:
-                                                        Colors.grey.shade700),
+                                          if (leave.state == 'รออนุมัติ')
+                                            TextButton.icon(
+                                              onPressed: () =>
+                                                  _editLeaveRequest(leave),
+                                              icon: const Icon(Icons.edit,
+                                                  size: 18),
+                                              label: Text('แก้ไข',
+                                                  style: GoogleFonts
+                                                      .ibmPlexSansThai()),
+                                              style: TextButton.styleFrom(
+                                                foregroundColor:
+                                                    Colors.orange.shade700,
                                               ),
                                             ),
-                                          if (leave.approvedAt != null)
-                                            Text(
-                                              'เมื่อ: ${DateFormat('d/M/yyyy HH:mm', 'th').format(leave.approvedAt!)}',
-                                              style: GoogleFonts.kanit(
-                                                  fontSize: 14,
-                                                  color: Colors.grey.shade700),
+                                          if (leave.state != 'ยกเลิก')
+                                            TextButton.icon(
+                                              onPressed: () =>
+                                                  _showCancelConfirmationDialog(
+                                                      leave.id),
+                                              icon: const Icon(Icons.cancel,
+                                                  size: 18),
+                                              label: Text('ยกเลิก',
+                                                  style: GoogleFonts
+                                                      .ibmPlexSansThai()),
+                                              style: TextButton.styleFrom(
+                                                foregroundColor:
+                                                    Colors.red.shade700,
+                                              ),
                                             ),
-                                          const SizedBox(height: 16),
-                                          Wrap(
-                                            spacing: 8.0,
-                                            runSpacing: 4.0,
-                                            alignment: WrapAlignment.end,
-                                            children: [
-                                              if (leave.filePath != null &&
-                                                  leave.filePath!.isNotEmpty &&
-                                                  (leave.state == 'รออนุมัติ' ||
-                                                      leave.state ==
-                                                          'อนุมัติ' ||
-                                                      leave.state ==
-                                                          'ไม่อนุมัติ'))
-                                                TextButton.icon(
-                                                  onPressed: () async {
-                                                    await _openFileUrl(
-                                                        leave.filePath);
-                                                  },
-                                                  icon: const Icon(Icons.image,
-                                                      size: 18),
-                                                  label: Text('ดูไฟล์แนบ',
-                                                      style:
-                                                          GoogleFonts.kanit()),
-                                                  style: TextButton.styleFrom(
-                                                    foregroundColor:
-                                                        Colors.blue.shade700,
-                                                  ),
-                                                ),
-                                              if (leave.state == 'รออนุมัติ')
-                                                TextButton.icon(
-                                                  onPressed: () =>
-                                                      _editLeaveRequest(leave),
-                                                  icon: const Icon(Icons.edit,
-                                                      size: 18),
-                                                  label: Text('แก้ไข',
-                                                      style:
-                                                          GoogleFonts.kanit()),
-                                                  style: TextButton.styleFrom(
-                                                    foregroundColor:
-                                                        Colors.orange.shade700,
-                                                  ),
-                                                ),
-                                              if (leave.state != 'ยกเลิก')
-                                                TextButton.icon(
-                                                  onPressed: () =>
-                                                      _showCancelConfirmationDialog(
-                                                          leave.id),
-                                                  icon: const Icon(Icons.cancel,
-                                                      size: 18),
-                                                  label: Text('ยกเลิก',
-                                                      style:
-                                                          GoogleFonts.kanit()),
-                                                  style: TextButton.styleFrom(
-                                                    foregroundColor:
-                                                        Colors.red.shade700,
-                                                  ),
-                                                ),
-                                            ],
-                                          ),
                                         ],
                                       ),
-                                    ),
+                                    ],
                                   ),
                                 );
                               },
