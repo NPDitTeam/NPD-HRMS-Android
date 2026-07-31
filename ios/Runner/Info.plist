@@ -57,6 +57,11 @@
         <!-- End of Updated Privacy Descriptions -->
         <key>NSMicrophoneUsageDescription</key>
         <string>เราต้องการใช้ไมโครโฟนสำหรับการแนบเสียง</string>
+        <!-- ให้ไฟล์ที่บันทึก (เช่น สลิปเงินเดือน) มองเห็นได้ในแอป "ไฟล์" ของ iOS -->
+        <key>UIFileSharingEnabled</key>
+        <true/>
+        <key>LSSupportsOpeningDocumentsInPlace</key>
+        <true/>
         <key>UIApplicationSupportsIndirectInputEvents</key>
         <true/>
         <key>UILaunchStoryboardName</key>

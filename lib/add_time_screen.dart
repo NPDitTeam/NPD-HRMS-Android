@@ -12,6 +12,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'package:open_filex/open_filex.dart';
 // Assuming User class is in main.dart or a shared model file
+import 'full_add_time_history_screen.dart';
 import 'main.dart' show User;
 import 'widgets/expandable_history_card.dart';
 import 'odoo_rpc_service.dart';
@@ -381,6 +382,52 @@ class AddTimeScreenState extends State<AddTimeScreen> {
   String _formatThaiDate(DateTime date) {
     final DateFormat formatter = DateFormat('d MMMM yyyy', 'th');
     return formatter.format(date);
+  }
+
+  /// ✅ ปุ่ม "แสดงทั้งหมด" — เปิดหน้าประวัติการเพิ่มเวลาย้อนหลังทั้งหมด (เลือกเดือน/ปีได้)
+  Widget _buildShowAllButton() {
+    return InkWell(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => FullAddTimeHistoryScreen(
+              user: widget.user,
+              initialMonth: DateTime.now().month,
+              initialYear: DateTime.now().year,
+            ),
+          ),
+        );
+      },
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primary.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'แสดงทั้งหมด',
+              style: GoogleFonts.ibmPlexSansThai(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF1A1A1A),
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.arrow_forward_ios,
+                size: 12, color: Color(0xFF1A1A1A)),
+          ],
+        ),
+      ),
+    );
   }
 
   Color _getStateColor(String state) {
@@ -1538,10 +1585,19 @@ class AddTimeScreenState extends State<AddTimeScreen> {
                         ),
                       ),
                       const SizedBox(height: 32),
-                      Text(
-                        '📜 ประวัติการเพิ่มเวลา (7 วันล่าสุด)',
-                        style: GoogleFonts.ibmPlexSansThai(
-                            fontSize: 18, fontWeight: FontWeight.bold),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'ประวัติการเพิ่มเวลา (ล่าสุด 7 วัน)',
+                              style: GoogleFonts.ibmPlexSansThai(
+                                  fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          _buildShowAllButton(),
+                        ],
                       ),
                       const SizedBox(height: 16),
                       _logs.isEmpty && !_isLoading

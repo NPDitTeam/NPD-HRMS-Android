@@ -9,6 +9,7 @@ import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:photo_view/photo_view.dart';
+import 'full_leave_history_screen.dart';
 import 'leave_allowance_screen.dart';
 import 'odoo_rpc_service.dart';
 import 'widgets/expandable_history_card.dart';
@@ -240,6 +241,52 @@ class LeaveScreenState extends State<LeaveScreen> {
   String _formatThaiDate(DateTime date) {
     final DateFormat formatter = DateFormat('d MMMM yyyy', 'th');
     return formatter.format(date);
+  }
+
+  /// ✅ ปุ่ม "แสดงทั้งหมด" — เปิดหน้าประวัติการลาย้อนหลังทั้งหมด (เลือกเดือน/ปีได้)
+  Widget _buildShowAllButton() {
+    return InkWell(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => FullLeaveHistoryScreen(
+              user: widget.user,
+              initialMonth: DateTime.now().month,
+              initialYear: DateTime.now().year,
+            ),
+          ),
+        );
+      },
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Theme.of(context).colorScheme.primary.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'แสดงทั้งหมด',
+              style: GoogleFonts.ibmPlexSansThai(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: const Color(0xFF1A1A1A),
+              ),
+            ),
+            const SizedBox(width: 4),
+            const Icon(Icons.arrow_forward_ios,
+                size: 12, color: Color(0xFF1A1A1A)),
+          ],
+        ),
+      ),
+    );
   }
 
   Color _getStateColor(String state) {
@@ -2156,10 +2203,19 @@ class LeaveScreenState extends State<LeaveScreen> {
                         ),
                       ),
                       const SizedBox(height: 32),
-                      Text(
-                        '📜 ประวัติการลา 7 (ล่าสุด)',
-                        style: GoogleFonts.ibmPlexSansThai(
-                            fontSize: 18, fontWeight: FontWeight.bold),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'ประวัติการลา (ล่าสุด 7 วัน)',
+                              style: GoogleFonts.ibmPlexSansThai(
+                                  fontSize: 16, fontWeight: FontWeight.bold),
+                            ),
+                          ),
+                          _buildShowAllButton(),
+                        ],
                       ),
                       const SizedBox(height: 16),
                       _leaves.isEmpty && !_isLoading

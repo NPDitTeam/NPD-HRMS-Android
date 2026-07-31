@@ -1092,15 +1092,15 @@ class _MainAppScreenState extends State<MainAppScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('สิ่งที่ปรับปรุงในเวอร์ชัน 1.3.6',
+                  Text('สิ่งที่ปรับปรุงในเวอร์ชัน 1.3.7',
                       style: GoogleFonts.ibmPlexSansThai(
                           fontWeight: FontWeight.bold, fontSize: 15)),
                   const SizedBox(height: 10),
-                  Text('- สลิปเงินเดือนแสดงค่าคอมมิชชั่นครบ (รวมคอมสาขาและคอม Sale)',
+                  Text('- เมนูอนุมัติเพิ่มเวลา เปิดดูไฟล์แนบได้แล้ว ทั้งในการ์ดและหน้ารายละเอียด',
                       style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
-                  Text('- เพิ่มรายการหัก เบิกเงินล่วงหน้า และ เงินกู้ ในสลิป',
+                  Text('- ประวัติการลาและประวัติการเพิ่มเวลา เพิ่มปุ่มแสดงทั้งหมด ดูย้อนหลังได้ทีละเดือน',
                       style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
-                  Text('- แก้ยอดหักขาดงานให้ตรงกับระบบเงินเดือน',
+                  Text('- สลิปเงินเดือน แก้ปุ่มแชร์และบันทึกไฟล์บน iPhone และ iPad ให้ใช้งานได้',
                       style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
                   const SizedBox(height: 12),
                   Text(
