@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:photo_view/photo_view.dart';
 
 import 'main.dart' show User;
 import 'models/approve_add_time_log.dart'; // Ensure this model is updated as well
@@ -285,50 +286,129 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
     }
   }
 
+  // ✅ สร้าง URL เต็มจาก file_path ที่เก็บใน DB
+  // - รองรับ path แบบเก่าที่ขึ้นต้นด้วย ../ หรือ ./
+  // - encode ชื่อไฟล์ (ภาษาไทย / เว้นวรรค) ไม่งั้น Uri จะพัง โหลดรูปไม่ขึ้น
+  String _buildAttachmentUrl(String filePath) {
+    if (filePath.startsWith('http://') || filePath.startsWith('https://')) {
+      return Uri.encodeFull(filePath);
+    }
+
+    String cleaned = filePath.trim().replaceAll('\\', '/');
+    while (cleaned.startsWith('../') || cleaned.startsWith('./')) {
+      cleaned = cleaned.substring(cleaned.startsWith('../') ? 3 : 2);
+    }
+    if (cleaned.startsWith('/')) cleaned = cleaned.substring(1);
+    if (cleaned.startsWith('api/')) cleaned = cleaned.substring(4);
+
+    final String encoded =
+        cleaned.split('/').map(Uri.encodeComponent).join('/');
+    return 'https://npdhrms.com/api/$encoded';
+  }
+
+  String _attachmentExtension(String filePath) {
+    final String name = filePath.split('/').last.split('?').first;
+    if (!name.contains('.')) return '';
+    return name.split('.').last.toLowerCase();
+  }
+
+  bool _isImageExtension(String ext) =>
+      ext == 'jpg' || ext == 'jpeg' || ext == 'png' || ext == 'gif' || ext == 'webp';
+
   // ฟังก์ชันแสดง popup ไฟล์แนบ
   // ✅ ฟังก์ชันเปิดไฟล์แนบ (Popup + กรอบ + Zoom ได้)
-  void _openAttachment(String filePath) {
-    final fullUrl = filePath.startsWith('http')
-        ? filePath
-        : 'https://npdhrms.com/api/$filePath';
+  Future<void> _openAttachment(String? filePath) async {
+    if (filePath == null || filePath.trim().isEmpty) {
+      _showSnackBar('ไม่มีไฟล์แนบ', isError: true);
+      return;
+    }
 
-    debugPrint("📂 กำลังเปิดไฟล์แนบ: $fullUrl"); // ✅ log path
+    final String fullUrl = _buildAttachmentUrl(filePath);
+    final String ext = _attachmentExtension(filePath);
 
-    if (filePath.endsWith('.jpg') ||
-        filePath.endsWith('.jpeg') ||
-        filePath.endsWith('.png')) {
-      // แสดงภาพใน popup พร้อมกรอบ
-      showDialog(
-        context: context,
-        builder: (_) => Dialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(12), // มนเล็กน้อย
+    debugPrint("📂 กำลังเปิดไฟล์แนบ: $fullUrl (.$ext)"); // ✅ log path
+
+    if (_isImageExtension(ext)) {
+      _showImageDialog(fullUrl);
+      return;
+    }
+
+    // ไฟล์ที่ไม่ใช่รูป (เช่น PDF) → เปิดด้วยแอปภายนอก
+    try {
+      final Uri uri = Uri.parse(fullUrl);
+      final bool ok =
+          await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok) {
+        final bool fallback =
+            await launchUrl(uri, mode: LaunchMode.platformDefault);
+        if (!fallback) {
+          _showSnackBar('ไม่สามารถเปิดไฟล์แนบได้ (.$ext)', isError: true);
+        }
+      }
+    } catch (e) {
+      debugPrint('❌ เปิดไฟล์แนบไม่สำเร็จ: $e');
+      _showSnackBar('ไม่สามารถเปิดไฟล์แนบได้: $e', isError: true);
+    }
+  }
+
+  void _showImageDialog(String imageUrl) {
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12), // มนเล็กน้อย
+        ),
+        child: Container(
+          decoration: BoxDecoration(
+            border: Border.all(
+                color: Colors.grey.shade300, width: 2), // ✅ กรอบเรียบๆ
+            borderRadius: BorderRadius.circular(12),
+            color: Colors.white,
           ),
-          child: Container(
-            decoration: BoxDecoration(
-              border: Border.all(
-                  color: Colors.grey.shade300, width: 2), // ✅ กรอบเรียบๆ
-              borderRadius: BorderRadius.circular(12),
-              color: Colors.white,
-            ),
-            padding: const EdgeInsets.all(8),
-            child: InteractiveViewer(
-              child: Image.network(
-                fullUrl,
-                fit: BoxFit.contain,
-                errorBuilder: (context, error, stackTrace) => Text(
-                    'โหลดไฟล์ไม่สำเร็จ',
-                    style: GoogleFonts.ibmPlexSansThai(color: Colors.red)),
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Align(
+                alignment: Alignment.topRight,
+                child: IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
               ),
-            ),
+              SizedBox(
+                height: MediaQuery.of(context).size.height * 0.6,
+                child: PhotoView(
+                  imageProvider: NetworkImage(imageUrl),
+                  backgroundDecoration:
+                      const BoxDecoration(color: Colors.white),
+                  minScale: PhotoViewComputedScale.contained * 0.8,
+                  maxScale: PhotoViewComputedScale.covered * 2,
+                  loadingBuilder: (context, event) => const Center(
+                      child: CircularProgressIndicator()),
+                  errorBuilder: (context, error, stackTrace) {
+                    debugPrint('PhotoView Error: $error ($imageUrl)');
+                    return Center(
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.broken_image,
+                              size: 48, color: Colors.red),
+                          const SizedBox(height: 8),
+                          Text('โหลดไฟล์แนบไม่สำเร็จ',
+                              style: GoogleFonts.ibmPlexSansThai(
+                                  color: Colors.red)),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
           ),
         ),
-      );
-    } else if (filePath.endsWith('.pdf')) {
-      launchUrl(Uri.parse(fullUrl), mode: LaunchMode.externalApplication);
-    } else {
-      launchUrl(Uri.parse(fullUrl), mode: LaunchMode.externalApplication);
-    }
+      ),
+    );
   }
 
   Future<void> _showDisapproveDialog(int requestId) async {
@@ -543,6 +623,20 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                       'อนุมัติเมื่อ:',
                       DateFormat('d/M/yyyy HH:mm', 'th')
                           .format(request.approvedAt!)),
+                // ✅ ไฟล์แนบ (แสดงในหน้ารายละเอียดด้วย)
+                const SizedBox(height: 8),
+                if (request.filePath != null && request.filePath!.isNotEmpty)
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: TextButton.icon(
+                      onPressed: () => _openAttachment(request.filePath),
+                      icon: const Icon(Icons.attach_file, size: 18),
+                      label: Text('ดูไฟล์แนบ',
+                          style: GoogleFonts.ibmPlexSansThai()),
+                    ),
+                  )
+                else
+                  _buildInfoRowInDialog('ไฟล์แนบ:', 'ไม่มีไฟล์แนบ'),
               ],
             ),
           ),

@@ -184,6 +184,37 @@ class _PayslipScreenState extends State<PayslipScreen> {
     );
   }
 
+  /// ✅ iOS จำเป็นต้องระบุตำแหน่งที่ share sheet จะโผล่ (popover)
+  /// ถ้าไม่ส่งไป plugin จะ return error กลับมาเฉยๆ แล้วไม่เปิดหน้าต่างแชร์
+  /// (เห็นชัดบน iPad — กดแล้วเงียบ ไม่มีอะไรขึ้น)
+  Rect _sharePositionOrigin() {
+    final RenderObject? box = context.findRenderObject();
+    if (box is RenderBox && box.hasSize) {
+      return box.localToGlobal(Offset.zero) & box.size;
+    }
+    // fallback: กลางจอ
+    final Size size = MediaQuery.of(context).size;
+    return Rect.fromCenter(
+      center: Offset(size.width / 2, size.height / 2),
+      width: 1,
+      height: 1,
+    );
+  }
+
+  /// เรียก share sheet พร้อมจัดการผลลัพธ์ให้ผู้ใช้เห็นเสมอ
+  Future<ShareResult?> _shareFile(String filePath, {required String text}) async {
+    final result = await SharePlus.instance.share(
+      ShareParams(
+        files: [XFile(filePath, mimeType: 'application/pdf')],
+        text: text,
+        subject: text,
+        sharePositionOrigin: _sharePositionOrigin(),
+      ),
+    );
+    debugPrint('📤 Share result: ${result.status} (${result.raw})');
+    return result;
+  }
+
   Future<void> _savePayslipToDevice() async {
     if (_selectedPayslipData == null) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -228,13 +259,17 @@ class _PayslipScreenState extends State<PayslipScreen> {
 
         await OpenFilex.open(filePath);
       } else if (Platform.isIOS) {
+        // iOS ไม่มีโฟลเดอร์ Download ให้เขียนตรงๆ
+        // ต้องเขียนลง sandbox ของแอปก่อน แล้วเปิด share sheet
+        // ให้ผู้ใช้เลือก "Save to Files" / "บันทึกลงไฟล์" เอง
         final dir = await getApplicationDocumentsDirectory();
         filePath = "${dir.path}/payslip_${monthAbbr}_${_selectedYear}.pdf";
 
         final file = File(filePath);
         await file.writeAsBytes(pdfBytes);
 
-        await Share.shareXFiles([XFile(filePath)], text: "สลิปเงินเดือนของคุณ");
+        await _shareFile(filePath, text: "สลิปเงินเดือนของคุณ");
+        return; // ไม่ต้องขึ้น snackbar path ภายในเครื่อง ผู้ใช้เอาไปทำอะไรก็ได้จาก share sheet
       }
 
       if (mounted && filePath != null) {
@@ -584,8 +619,9 @@ class _PayslipScreenState extends State<PayslipScreen> {
       final file = File(filePath);
       await file.writeAsBytes(pdfBytes);
 
-      await Share.shareXFiles([XFile(filePath)], text: "สลิปเงินเดือนของคุณ");
+      await _shareFile(filePath, text: "สลิปเงินเดือนของคุณ");
     } catch (e) {
+      debugPrint('❌ Share payslip failed: $e');
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("เกิดข้อผิดพลาดในการแชร์: $e")),
