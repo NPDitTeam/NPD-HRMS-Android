@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:google_fonts/google_fonts.dart';
 
+import 'ui/app_theme.dart';
 import 'main.dart' show User; // ใช้ User model จาก main.dart
 
 class LeaveAllowanceScreen extends StatefulWidget {
@@ -145,7 +146,7 @@ class _LeaveAllowanceScreenState extends State<LeaveAllowanceScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppGradientBar(
         title: Text('สิทธิ์การลา', style: GoogleFonts.ibmPlexSansThai()),
       ),
       body: _isLoading
@@ -169,7 +170,8 @@ class _LeaveAllowanceScreenState extends State<LeaveAllowanceScreen> {
                     child: Card(
                       elevation: 4,
                       shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
+                          borderRadius: BorderRadius.circular(12),
+                          side: BorderSide(color: AppColors.frame(Theme.of(context).colorScheme.primary))),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(
                             horizontal: 20.0, vertical: 15.0),

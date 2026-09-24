@@ -484,9 +484,17 @@ class CheckinScreenState extends State<CheckinScreen> {
     );
   }
 
+  /// Odoo ส่ง false กลับมาแทนค่าว่างสำหรับช่องข้อความ/วันที่
+  /// ถ้า cast เป็น String ตรง ๆ จะพังทันที จึงต้องแปลงผ่านตัวนี้เสมอ
+  String _asText(dynamic value) {
+    if (value == null || value == false) return '';
+    return value.toString();
+  }
+
   /// แปลง 2026-09-18 เป็น 18 ก.ย. 2569 ให้อ่านง่าย
-  String _thaiDate(String? raw) {
-    if (raw == null || raw.isEmpty) return '-';
+  String _thaiDate(dynamic value) {
+    final raw = _asText(value);
+    if (raw.isEmpty) return '-';
     final parts = raw.split('-');
     if (parts.length != 3) return raw;
     const months = [
@@ -507,10 +515,10 @@ class CheckinScreenState extends State<CheckinScreen> {
   /// ทำไมถึงลงเวลาไม่ได้ และถูกพักงานถึงเมื่อไร จะได้ไม่ต้องไปถาม HR
   Widget _buildSuspendedBody() {
     final data = _suspension!;
-    final start = _thaiDate(data['date_start'] as String?);
-    final end = _thaiDate(data['date_end'] as String?);
-    final reason = (data['reason'] as String?)?.trim() ?? '';
-    final note = (data['note'] as String?)?.trim() ?? '';
+    final start = _thaiDate(data['date_start']);
+    final end = _thaiDate(data['date_end']);
+    final reason = _asText(data['reason']).trim();
+    final note = _asText(data['note']).trim();
     final days = data['day_count'];
 
     return SafeArea(
@@ -548,7 +556,7 @@ class CheckinScreenState extends State<CheckinScreen> {
                     _suspensionRow(Icons.event_busy_rounded, 'ตั้งแต่วันที่', start),
                     const SizedBox(height: 10),
                     _suspensionRow(Icons.event_available_rounded, 'ถึงวันที่', end),
-                    if (days != null) ...[
+                    if (days != null && days != false) ...[
                       const SizedBox(height: 10),
                       _suspensionRow(
                           Icons.today_rounded, 'รวม', '$days วัน'),

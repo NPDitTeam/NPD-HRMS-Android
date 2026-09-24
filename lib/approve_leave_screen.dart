@@ -10,6 +10,7 @@ import 'package:photo_view/photo_view.dart';
 import 'main.dart' show User;
 import 'models/leave_log.dart';
 import 'widgets/expandable_history_card.dart';
+import 'ui/app_theme.dart';
 
 // --- Global Helper Functions (can stay global as they have no dependency on State/Context) ---
 String _formatTimeOfDayToString(TimeOfDay tod) {
@@ -36,7 +37,14 @@ String _formatThaiTime(TimeOfDay tod) {
 class ApproveLeaveScreen extends StatefulWidget {
   final User user;
 
-  const ApproveLeaveScreen({super.key, required this.user});
+  /// อยู่ในหน้า "อนุมัติ" ที่มีแถบหัวของตัวเองแล้ว — ซ่อนแถบหัวของหน้านี้ไม่ให้ซ้อนสองชั้น
+  final bool embedded;
+
+  const ApproveLeaveScreen({
+    super.key,
+    required this.user,
+    this.embedded = false,
+  });
 
   @override
   State<ApproveLeaveScreen> createState() => ApproveLeaveScreenState();
@@ -720,9 +728,11 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('คำขออนุมัติการลา'),
-      ),
+      appBar: widget.embedded
+          ? null
+          : AppGradientBar(
+              title: const Text('คำขออนุมัติการลา'),
+            ),
       body: _isLoading &&
               _pendingRequests.isEmpty &&
               _historyRequests.isEmpty &&
@@ -945,6 +955,9 @@ class ApproveLeaveScreenState extends State<ApproveLeaveScreen> {
                                     Align(
                                       alignment: Alignment.centerRight,
                                       child: TextButton.icon(
+                                        style: TextButton.styleFrom(
+                                            foregroundColor:
+                                                const Color(0xFF1A1A1A)),
                                         onPressed: () async {
                                           await _openFileUrl(
                                               request.filePath);

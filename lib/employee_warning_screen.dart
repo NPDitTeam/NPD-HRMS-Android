@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'odoo_rpc_service.dart';
 import 'notification_service.dart';
+import 'ui/app_theme.dart';
 
 /// หน้าจอแสดงรายการใบเตือนพนักงาน
 class EmployeeWarningScreen extends StatefulWidget {
@@ -43,8 +44,13 @@ class _EmployeeWarningScreenState extends State<EmployeeWarningScreen> {
       final prefs = await SharedPreferences.getInstance();
       final count =
           await OdooRpcService().getEmployeeWarningCount(widget.employeeCode);
+      // null = ดึงไม่ได้ (เน็ตหลุด) อย่าเขียนทับสถานะอ่านแล้วด้วยค่ามั่ว
+      if (count == null) return;
       await prefs.setInt(
           'warning_read_count_${widget.employeeCode}', count);
+      // อ่านแล้ว → กันไม่ให้แจ้งเตือนใบเดิมเด้งซ้ำในรอบเช็คถัดไป
+      await prefs.setInt(
+          'warning_notified_count_${widget.employeeCode}', count);
     } catch (_) {}
   }
 
@@ -69,7 +75,7 @@ class _EmployeeWarningScreenState extends State<EmployeeWarningScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg, style: GoogleFonts.ibmPlexSansThai()),
-        backgroundColor: error ? Colors.red.shade700 : npdBlack,
+        backgroundColor: error ? Colors.red.shade700 : AppColors.text,
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -135,11 +141,9 @@ class _EmployeeWarningScreenState extends State<EmployeeWarningScreen> {
 
     return Scaffold(
       backgroundColor: const Color(0xFFF8F8F8),
-      appBar: AppBar(
+      appBar: AppGradientBar(
         title: Text('ใบเตือนพนักงาน',
             style: GoogleFonts.ibmPlexSansThai(fontWeight: FontWeight.w600)),
-        backgroundColor: npdYellow,
-        foregroundColor: npdBlack,
       ),
       body: _loading
           ? Center(child: CircularProgressIndicator(color: npdYellow))
@@ -201,7 +205,7 @@ class _EmployeeWarningScreenState extends State<EmployeeWarningScreen> {
                       style: GoogleFonts.ibmPlexSansThai(
                           fontSize: 16,
                           fontWeight: FontWeight.w600,
-                          color: npdBlack),
+                          color: AppColors.text),
                     ),
                     Text(
                       'รหัส: ${emp['code'] ?? '-'}',
@@ -280,7 +284,9 @@ class _EmployeeWarningScreenState extends State<EmployeeWarningScreen> {
           Text(
             'ไม่มีใบเตือน',
             style: GoogleFonts.ibmPlexSansThai(
-                fontSize: 16, fontWeight: FontWeight.w600, color: npdBlack),
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: AppColors.text),
           ),
           const SizedBox(height: 4),
           Text(
@@ -386,7 +392,7 @@ class _EmployeeWarningScreenState extends State<EmployeeWarningScreen> {
                   style: GoogleFonts.ibmPlexSansThai(
                       fontSize: 14,
                       fontWeight: FontWeight.w500,
-                      color: npdBlack),
+                      color: AppColors.text),
                 ),
                 if ((line['description'] ?? '').toString().isNotEmpty) ...[
                   const SizedBox(height: 10),

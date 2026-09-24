@@ -11,6 +11,7 @@ import 'package:photo_view/photo_view.dart';
 import 'main.dart' show User;
 import 'models/approve_add_time_log.dart'; // Ensure this model is updated as well
 import 'widgets/expandable_history_card.dart';
+import 'ui/app_theme.dart';
 
 // --- Helper Functions ---
 String _formatTimeOfDayToString(TimeOfDay tod) {
@@ -59,7 +60,14 @@ Color _getStateBackgroundColor(String state) {
 class ApproveAddTimeScreen extends StatefulWidget {
   final User user;
 
-  const ApproveAddTimeScreen({super.key, required this.user});
+  /// อยู่ในหน้า "อนุมัติ" ที่มีแถบหัวของตัวเองแล้ว — ซ่อนแถบหัวของหน้านี้ไม่ให้ซ้อนสองชั้น
+  final bool embedded;
+
+  const ApproveAddTimeScreen({
+    super.key,
+    required this.user,
+    this.embedded = false,
+  });
 
   @override
   State<ApproveAddTimeScreen> createState() => ApproveAddTimeScreenState();
@@ -629,6 +637,8 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: TextButton.icon(
+                      style: TextButton.styleFrom(
+                          foregroundColor: const Color(0xFF1A1A1A)),
                       onPressed: () => _openAttachment(request.filePath),
                       icon: const Icon(Icons.attach_file, size: 18),
                       label: Text('ดูไฟล์แนบ',
@@ -711,9 +721,11 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
     }
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('คำขออนุมัติเพิ่มเวลา'),
-      ),
+      appBar: widget.embedded
+          ? null
+          : AppGradientBar(
+              title: const Text('คำขออนุมัติเพิ่มเวลา'),
+            ),
       body: _isLoading &&
               _pendingRequests.isEmpty &&
               _historyRequests.isEmpty &&
@@ -827,6 +839,9 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                                     Align(
                                       alignment: Alignment.centerRight,
                                       child: TextButton.icon(
+                                        style: TextButton.styleFrom(
+                                            foregroundColor:
+                                                const Color(0xFF1A1A1A)),
                                         onPressed: () =>
                                             _openAttachment(
                                                 request.filePath!),
@@ -978,6 +993,9 @@ class ApproveAddTimeScreenState extends State<ApproveAddTimeScreen> {
                                     Align(
                                       alignment: Alignment.centerRight,
                                       child: TextButton.icon(
+                                        style: TextButton.styleFrom(
+                                            foregroundColor:
+                                                const Color(0xFF1A1A1A)),
                                         onPressed: () => _openAttachment(
                                             request.filePath!),
                                         icon: const Icon(

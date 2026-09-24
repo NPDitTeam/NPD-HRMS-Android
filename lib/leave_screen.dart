@@ -12,6 +12,7 @@ import 'package:photo_view/photo_view.dart';
 import 'full_leave_history_screen.dart';
 import 'leave_allowance_screen.dart';
 import 'odoo_rpc_service.dart';
+import 'ui/app_theme.dart';
 import 'widgets/expandable_history_card.dart';
 
 import 'main.dart' show User;
@@ -801,6 +802,35 @@ class LeaveScreenState extends State<LeaveScreen> {
     return null;
   }
 
+  /// สิทธิหยุดวันเสาร์ใช้ได้ครั้งละ 1 วัน และต้องเป็นวันเสาร์เท่านั้น
+  ///
+  /// เคยมีใบลาที่วันสิ้นสุดถูกทิ้งไว้เป็น "วันที่กรอกใบ" (เช่น 30 มี.ค.–18 เม.ย. = 20 วัน)
+  /// สิทธิ์เลยถูกหักยาวทั้งช่วง จึงล็อกทั้งตอนเลือกวันที่และตอนกดบันทึก
+  /// return null = ผ่าน, return String = มี error
+  String? _checkSaturdayDayRule() {
+    if (_selectedLeaveType != 'สิทธิหยุดวันเสาร์') return null;
+    if (_selectedStartDate == null || _selectedEndDate == null) return null;
+
+    if (_selectedStartDate!.weekday != DateTime.saturday) {
+      return 'สิทธิหยุดวันเสาร์ต้องเลือกวันเสาร์เท่านั้น';
+    }
+    if (!_isSameDay(_selectedStartDate!, _selectedEndDate!)) {
+      return 'สิทธิหยุดวันเสาร์ใช้ได้ครั้งละ 1 วัน '
+          '(วันเริ่มต้นและวันสิ้นสุดต้องเป็นวันเดียวกัน)';
+    }
+    return null;
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
+  /// วันเสาร์ถัดไป (ถ้าวันนั้นเป็นเสาร์อยู่แล้วคืนวันเดิม)
+  /// ใช้ตั้ง initialDate ของปฏิทิน เพราะ Flutter บังคับว่า initialDate ต้องเลือกได้
+  DateTime _nextSaturday(DateTime from) {
+    final base = _dateOnly(from);
+    return base.add(Duration(days: (DateTime.saturday - base.weekday + 7) % 7));
+  }
+
   /// ตรวจว่ายังอยู่ในช่วงทดลองงาน (ยังไม่ผ่าน 3 เดือน) หรือไม่
   /// คืน true ถ้ายังไม่ผ่านโปร, false ถ้าผ่านแล้ว/ไม่มีข้อมูล
   bool _isInProbation() {
@@ -1128,6 +1158,13 @@ class LeaveScreenState extends State<LeaveScreen> {
     final saturdayErr = _checkSaturdayLeaveLimitRule();
     if (saturdayErr != null) {
       _showSnackBar(saturdayErr, isError: true);
+      return;
+    }
+
+    // ✅ ต้องเป็นวันเสาร์และวันเดียว (กันวันสิ้นสุดค้างเป็นวันที่กรอกใบ)
+    final saturdayDayErr = _checkSaturdayDayRule();
+    if (saturdayDayErr != null) {
+      _showSnackBar(saturdayDayErr, isError: true);
       return;
     }
 
@@ -1476,6 +1513,14 @@ class LeaveScreenState extends State<LeaveScreen> {
   Future<void> _selectDate(BuildContext context,
       {required bool isStartDate}) async {
     // ✅ ถ้าเลือก "ลาพักร้อน" + เป็นวันเริ่มต้น → บังคับ firstDate ให้เลือกได้แค่ 4 วันข้างหน้าขึ้นไป
+    // สิทธิหยุดวันเสาร์ = วันเดียวและต้องเป็นวันเสาร์ → ไม่ให้เลือกวันสิ้นสุดแยก
+    final bool saturdayOnly = _selectedLeaveType == 'สิทธิหยุดวันเสาร์';
+    if (saturdayOnly && !isStartDate) {
+      _showSnackBar('สิทธิหยุดวันเสาร์ใช้ได้ครั้งละ 1 วัน '
+          'ระบบตั้งวันสิ้นสุดให้ตามวันที่เริ่มต้น');
+      return;
+    }
+
     DateTime firstDate = DateTime(2000);
     if (isStartDate && _selectedLeaveType == 'ลาพักร้อน') {
       final now = DateTime.now();
@@ -1488,12 +1533,16 @@ class LeaveScreenState extends State<LeaveScreen> {
         ? (_selectedStartDate ?? DateTime.now())
         : (_selectedEndDate ?? DateTime.now());
     if (initialDate.isBefore(firstDate)) initialDate = firstDate;
+    if (saturdayOnly) initialDate = _nextSaturday(initialDate);
 
     final DateTime? picked = await showDatePicker(
       context: context,
       initialDate: initialDate,
       firstDate: firstDate,
       lastDate: DateTime.now().add(const Duration(days: 365)),
+      // เลือกได้เฉพาะวันเสาร์เมื่อเป็นสิทธิหยุดวันเสาร์
+      selectableDayPredicate:
+          saturdayOnly ? (day) => day.weekday == DateTime.saturday : null,
       locale: const Locale('th', 'TH'),
       cancelText: 'ยกเลิก',
       confirmText: 'ตกลง',
@@ -1521,7 +1570,9 @@ class LeaveScreenState extends State<LeaveScreen> {
           _selectedStartDate = picked;
           _startDateController.text =
               DateFormat('d/M/yyyy', 'th').format(picked);
-          if (_selectedEndDate != null && _selectedEndDate!.isBefore(picked)) {
+          // สิทธิหยุดวันเสาร์ตั้งวันสิ้นสุดให้เท่ากับวันเริ่มต้นเสมอ
+          if (saturdayOnly ||
+              (_selectedEndDate != null && _selectedEndDate!.isBefore(picked))) {
             _selectedEndDate = picked;
             _endDateController.text =
                 DateFormat('d/M/yyyy', 'th').format(picked);
@@ -1675,7 +1726,7 @@ class LeaveScreenState extends State<LeaveScreen> {
         FocusScope.of(context).unfocus();
       },
       child: Scaffold(
-        appBar: AppBar(
+        appBar: AppGradientBar(
           title: const Text('การขอลางาน'),
           actions: [
             IconButton(
@@ -1730,7 +1781,8 @@ class LeaveScreenState extends State<LeaveScreen> {
                         child: Card(
                           elevation: 4,
                           shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(color: AppColors.frame(Theme.of(context).colorScheme.primary))),
                           child: Padding(
                             padding: const EdgeInsets.all(20.0),
                             child: Column(
@@ -1810,13 +1862,24 @@ class LeaveScreenState extends State<LeaveScreen> {
                                 TextFormField(
                                   controller: _endDateController,
                                   readOnly: true,
+                                  // สิทธิหยุดวันเสาร์ล็อกไว้ ระบบตั้งให้ตามวันเริ่มต้น
+                                  enabled: _selectedLeaveType !=
+                                      'สิทธิหยุดวันเสาร์',
                                   onTap: () =>
                                       _selectDate(context, isStartDate: false),
                                   decoration: InputDecoration(
                                     labelText: 'วันที่ลาสิ้นสุด',
+                                    helperText: _selectedLeaveType ==
+                                            'สิทธิหยุดวันเสาร์'
+                                        ? 'ใช้ได้ครั้งละ 1 วัน ระบบตั้งให้ตามวันที่เริ่มต้น'
+                                        : null,
+                                    helperStyle: GoogleFonts.ibmPlexSansThai(
+                                        fontSize: 11),
                                     labelStyle: GoogleFonts.ibmPlexSansThai(),
-                                    prefixIcon: const Icon(
-                                        Icons.calendar_today_outlined),
+                                    prefixIcon: Icon(_selectedLeaveType ==
+                                            'สิทธิหยุดวันเสาร์'
+                                        ? Icons.lock_outline
+                                        : Icons.calendar_today_outlined),
                                     border: OutlineInputBorder(
                                         borderRadius: BorderRadius.circular(8)),
                                     filled: true,
@@ -1908,6 +1971,29 @@ class LeaveScreenState extends State<LeaveScreen> {
                                           WidgetsBinding.instance
                                               .addPostFrameCallback((_) {
                                             _showSnackBar(probationErr,
+                                                isError: true);
+                                          });
+                                        }
+                                      }
+
+                                      // ✅ เปลี่ยนเป็น "สิทธิหยุดวันเสาร์" — ต้องเป็นวันเสาร์ และวันเดียว
+                                      if (newValue == 'สิทธิหยุดวันเสาร์' &&
+                                          _selectedStartDate != null) {
+                                        if (_selectedStartDate!.weekday ==
+                                            DateTime.saturday) {
+                                          _selectedEndDate = _selectedStartDate;
+                                          _endDateController.text =
+                                              DateFormat('d/M/yyyy', 'th')
+                                                  .format(_selectedStartDate!);
+                                        } else {
+                                          _selectedStartDate = null;
+                                          _selectedEndDate = null;
+                                          _startDateController.clear();
+                                          _endDateController.clear();
+                                          WidgetsBinding.instance
+                                              .addPostFrameCallback((_) {
+                                            _showSnackBar(
+                                                'สิทธิหยุดวันเสาร์ต้องเลือกวันเสาร์ — กรุณาเลือกวันที่ใหม่',
                                                 isError: true);
                                           });
                                         }

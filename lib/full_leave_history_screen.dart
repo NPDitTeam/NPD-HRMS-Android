@@ -9,6 +9,7 @@ import 'main.dart' show User;
 import 'models/leave_log.dart';
 import 'utils/attachment_utils.dart';
 import 'widgets/expandable_history_card.dart';
+import 'ui/app_theme.dart';
 
 /// หน้า "ประวัติการลาทั้งหมด" — เลือกดูย้อนหลังได้ทีละเดือน/ปี
 /// รูปแบบเดียวกับ FullCheckinHistoryScreen ของเมนูลงเวลา
@@ -118,7 +119,7 @@ class _FullLeaveHistoryScreenState extends State<FullLeaveHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppGradientBar(
         title: Text('ประวัติการลาทั้งหมด',
             style: GoogleFonts.ibmPlexSansThai()),
         actions: [
@@ -161,7 +162,7 @@ class _FullLeaveHistoryScreenState extends State<FullLeaveHistoryScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.shade300),
+                border: Border.all(color: AppColors.frame(Theme.of(context).colorScheme.primary)),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: DropdownButtonHideUnderline(
@@ -189,7 +190,7 @@ class _FullLeaveHistoryScreenState extends State<FullLeaveHistoryScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey.shade300),
+              border: Border.all(color: AppColors.frame(Theme.of(context).colorScheme.primary)),
               borderRadius: BorderRadius.circular(8),
             ),
             child: DropdownButtonHideUnderline(

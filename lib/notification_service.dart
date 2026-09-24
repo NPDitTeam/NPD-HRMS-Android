@@ -378,7 +378,7 @@ class NotificationService {
           importance: Importance.high,
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
-          color: const Color(0xFFFFD600),
+          color: const Color(0xFFFFE144),
           playSound: true,
           enableVibration: true,
           styleInformation: BigTextStyleInformation(
@@ -435,7 +435,7 @@ class NotificationService {
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
 
-          color: const Color(0xFFFFD600),
+          color: const Color(0xFFFFE144),
           playSound: true,
           enableVibration: true,
           styleInformation: BigTextStyleInformation(
@@ -492,7 +492,7 @@ class NotificationService {
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
 
-          color: const Color(0xFFFFD600),
+          color: const Color(0xFFFFE144),
           playSound: true,
           enableVibration: true,
           styleInformation: BigTextStyleInformation(
@@ -531,7 +531,7 @@ class NotificationService {
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
 
-          color: const Color(0xFFFFD600),
+          color: const Color(0xFFFFE144),
           playSound: true,
           enableVibration: true,
           styleInformation: BigTextStyleInformation(
@@ -569,7 +569,7 @@ class NotificationService {
           importance: Importance.high,
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
-          color: const Color(0xFFFFD600),
+          color: const Color(0xFFFFE144),
           playSound: true,
           enableVibration: true,
           styleInformation: BigTextStyleInformation(
@@ -588,6 +588,60 @@ class NotificationService {
     debugPrint('ส่งแจ้งเตือนทดสอบ: $title');
   }
 
+  /// id แจ้งเตือน "เข้างานสาย" — ใช้ id คงที่เพื่อให้เตือนซ้ำแล้วทับอันเดิม ไม่กองซ้อน
+  static const int lateCheckinNotificationId = 9906;
+
+  /// แจ้งเตือนเมื่อเข้างานสาย (ใช้ channel เดียวกับแจ้งเตือนเข้า-ออกงาน ให้เป็นชุดเดียวกัน)
+  ///
+  /// [minutes] นาทีที่สาย — มาจากสูตรที่ตั้งไว้ใน Odoo ไม่ได้คำนวณในแอป
+  /// [checkinTime] เวลาที่สแกนเข้าจริง เช่น "08:32" (ใส่หรือไม่ใส่ก็ได้)
+  Future<void> showLateCheckinNotification({
+    required int minutes,
+    String? checkinTime,
+  }) async {
+    if (minutes <= 0) return;
+
+    final String late = minutes < 60
+        ? '$minutes นาที'
+        : (minutes % 60 == 0
+            ? '${minutes ~/ 60} ชั่วโมง'
+            : '${minutes ~/ 60} ชั่วโมง ${minutes % 60} นาที');
+
+    final String body = checkinTime != null && checkinTime.isNotEmpty
+        ? 'วันนี้คุณเข้างานเวลา $checkinTime น. สาย $late'
+        : 'วันนี้คุณเข้างานสาย $late';
+
+    await _plugin.show(
+      lateCheckinNotificationId,
+      '⏰ เข้างานสาย',
+      body,
+      NotificationDetails(
+        android: AndroidNotificationDetails(
+          'work_reminder_channel',
+          'แจ้งเตือนเข้า-ออกงาน',
+          channelDescription: 'แจ้งเตือนเวลาเข้า-ออกงาน',
+          importance: Importance.high,
+          priority: Priority.high,
+          icon: '@mipmap/ic_launcher',
+          color: const Color(0xFFFFE144),
+          playSound: true,
+          enableVibration: true,
+          styleInformation: BigTextStyleInformation(
+            body,
+            contentTitle: '⏰ เข้างานสาย',
+            summaryText: 'NPD HRMS',
+          ),
+        ),
+        iOS: const DarwinNotificationDetails(
+          presentAlert: true,
+          presentBadge: true,
+          presentSound: true,
+        ),
+      ),
+    );
+    debugPrint('🔔 แจ้งเตือนเข้างานสาย: $body');
+  }
+
   /// แจ้งเตือนอัปเดตเวอร์ชันใหม่ (แสดงที่หน้ามือถือทันที)
   Future<void> showUpdateNotification(String latestVersion) async {
     await _plugin.show(
@@ -602,7 +656,7 @@ class NotificationService {
           importance: Importance.high,
           priority: Priority.high,
           icon: '@mipmap/ic_launcher',
-          color: const Color(0xFFFFD600),
+          color: const Color(0xFFFFE144),
           playSound: true,
           enableVibration: true,
           styleInformation: BigTextStyleInformation(

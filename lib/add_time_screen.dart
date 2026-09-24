@@ -16,6 +16,34 @@ import 'full_add_time_history_screen.dart';
 import 'main.dart' show User;
 import 'widgets/expandable_history_card.dart';
 import 'odoo_rpc_service.dart';
+import 'ui/app_theme.dart';
+
+// รายชื่อธนาคาร — ต้องตรงกับ thai_banks.py ฝั่ง Odoo (code คือค่าที่เก็บลง DB)
+// ใช้เป็นค่าสำรองเมื่อดึงรายชื่อจาก Odoo ไม่ได้ (เน็ตหลุด/เซิร์ฟเวอร์ล่ม)
+const List<Map<String, String>> kThaiBanks = [
+  {'code': 'KBANK', 'name': 'ธนาคารกสิกรไทย', 'short': 'ธ.กสิกรไทย'},
+  {'code': 'BBL', 'name': 'ธนาคารกรุงเทพ', 'short': 'ธ.กรุงเทพ'},
+  {'code': 'KTB', 'name': 'ธนาคารกรุงไทย', 'short': 'ธ.กรุงไทย'},
+  {'code': 'SCB', 'name': 'ธนาคารไทยพาณิชย์', 'short': 'ธ.ไทยพาณิชย์'},
+  {'code': 'BAY', 'name': 'ธนาคารกรุงศรีอยุธยา', 'short': 'ธ.กรุงศรีอยุธยา'},
+  {'code': 'TTB', 'name': 'ธนาคารทหารไทยธนชาต', 'short': 'ธ.ทหารไทยธนชาต'},
+  {'code': 'GSB', 'name': 'ธนาคารออมสิน', 'short': 'ธ.ออมสิน'},
+  {'code': 'UOB', 'name': 'ธนาคารยูโอบี', 'short': 'ธ.ยูโอบี'},
+  {'code': 'CIMBT', 'name': 'ธนาคารซีไอเอ็มบีไทย', 'short': 'ธ.ซีไอเอ็มบีไทย'},
+  {'code': 'KKP', 'name': 'ธนาคารเกียรตินาคินภัทร', 'short': 'ธ.เกียรตินาคินภัทร'},
+  {'code': 'LHBANK', 'name': 'ธนาคารแลนด์ แอนด์ เฮ้าส์', 'short': 'ธ.แลนด์ แอนด์ เฮ้าส์'},
+  {'code': 'TISCO', 'name': 'ธนาคารทิสโก้', 'short': 'ธ.ทิสโก้'},
+  {'code': 'BAAC', 'name': 'ธนาคารเพื่อการเกษตรและสหกรณ์การเกษตร', 'short': 'ธ.ก.ส.'},
+  {'code': 'GHB', 'name': 'ธนาคารอาคารสงเคราะห์', 'short': 'ธอส.'},
+  {'code': 'ISBT', 'name': 'ธนาคารอิสลามแห่งประเทศไทย', 'short': 'ธ.อิสลาม'},
+  {'code': 'PROMPTPAY', 'name': 'พร้อมเพย์ (PromptPay)', 'short': 'พร้อมเพย์'},
+];
+
+/// ประเภทการเพิ่มเวลาที่ต้องกรอกจำนวนเงิน
+const String kMedicalReasonType = 'ค่ารักษาพยาบาล';
+
+/// จำนวนไฟล์แนบสูงสุดของค่ารักษาพยาบาล — ต้องตรงกับ MAX_FILES ฝั่ง PHP
+const int kMaxMedicalFiles = 10;
 
 // Helper to format TimeOfDay to HH:mm string (can be used without context)
 String _formatTimeOfDayToString(TimeOfDay tod) {
@@ -47,6 +75,11 @@ class AddTimeLog {
   final String? allowanceType;
   final String? amount;
   final String? filePath;
+  // ค่ารักษาพยาบาล: บัญชีที่ให้โอนเข้า + ไฟล์แนบหลายไฟล์
+  final String? bankName;
+  final String? bankAccountNumber;
+  final String? bankAccountName;
+  final List<String> filePaths;
 
   AddTimeLog({
     required this.id,
@@ -69,6 +102,10 @@ class AddTimeLog {
     this.allowanceType,
     this.amount,
     this.filePath,
+    this.bankName,
+    this.bankAccountNumber,
+    this.bankAccountName,
+    this.filePaths = const [],
   });
 
   factory AddTimeLog.fromJson(Map<String, dynamic> json) {
@@ -108,7 +145,43 @@ class AddTimeLog {
           : json['allowance_type'].toString(),
       amount: json['amount']?.toString(),
       filePath: json['file_path'],
+      bankName: _nullIfEmpty(json['bank_name']),
+      bankAccountNumber: _nullIfEmpty(json['bank_account_number']),
+      bankAccountName: _nullIfEmpty(json['bank_account_name']),
+      filePaths: _parseFilePaths(json['file_paths'], json['file_path']),
     );
+  }
+
+  /// API เก่าคืน 'NULL' เป็นสตริง ต้องกันไว้ ไม่งั้นจะเอาไปโชว์บนจอ
+  static String? _nullIfEmpty(dynamic value) {
+    if (value == null) return null;
+    final text = value.toString().trim();
+    if (text.isEmpty || text == 'NULL' || text == 'null') return null;
+    return text;
+  }
+
+  /// file_paths อาจมาเป็น List (API ใหม่) หรือ JSON string (ข้อมูลเก่า)
+  /// ถ้าไม่มีเลย ให้ถอยไปใช้ file_path ไฟล์เดียวแบบเดิม
+  static List<String> _parseFilePaths(dynamic raw, dynamic legacy) {
+    final List<String> paths = [];
+    if (raw is List) {
+      paths.addAll(raw.map((e) => e.toString().trim()).where((e) => e.isNotEmpty));
+    } else if (raw is String && raw.trim().isNotEmpty && raw.trim() != 'NULL') {
+      try {
+        final decoded = json.decode(raw);
+        if (decoded is List) {
+          paths.addAll(
+              decoded.map((e) => e.toString().trim()).where((e) => e.isNotEmpty));
+        }
+      } catch (_) {
+        paths.add(raw.trim());
+      }
+    }
+    if (paths.isEmpty) {
+      final single = _nullIfEmpty(legacy);
+      if (single != null) paths.add(single);
+    }
+    return paths;
   }
 
   // Helper to format TimeOfDay to HH:mm string for API (can stay here)
@@ -142,6 +215,10 @@ class AddTimeLog {
       'allowance_type': allowanceType,
       'amount': amount,
       'file_path': filePath,
+      'bank_name': bankName,
+      'bank_account_number': bankAccountNumber,
+      'bank_account_name': bankAccountName,
+      'file_paths': filePaths,
     };
   }
 }
@@ -188,13 +265,52 @@ class AddTimeScreenState extends State<AddTimeScreen> {
 
   // ✅ Add _needsRefresh flag to control initial data fetch in didChangeDependencies
   bool _needsRefresh = true; //
-  String? _selectedFilePath;
+
+  // ไฟล์ที่เพิ่งเลือกจากเครื่อง (ยังไม่อัปโหลด) — ค่ารักษาพยาบาลเลือกได้หลายไฟล์
+  final List<String> _selectedFilePaths = [];
+  // ไฟล์ที่อัปโหลดไว้แล้วบนเซิร์ฟเวอร์ (โหมดแก้ไข) ใช้เช็คว่ามีไฟล์แนบอยู่หรือยัง
+  List<String> _existingFilePaths = [];
 
   // รายการประเภทค่าเบี้ยเลี้ยงจาก Odoo (ดึงเมื่อเลือกประเภท "ค่าเบี้ยเลี้ยงออกนอกสถานที่")
   List<Map<String, dynamic>>? _allowanceTypes;
   bool _isLoadingAllowanceTypes = false;
   String? _selectedAllowanceTypeName;
   bool _amountReadonlyFromAllowance = false;
+
+  // ---- ค่ารักษาพยาบาล: บัญชีที่ให้โอนเข้า + วงเงินคงเหลือจาก Odoo ----
+  final TextEditingController _bankAccountController = TextEditingController();
+  String? _selectedBankCode;
+  List<Map<String, String>> _bankOptions = List<Map<String, String>>.from(kThaiBanks);
+  bool _isLoadingMedicalInfo = false;
+  // ข้อมูลวงเงินจาก Odoo — null = ยังไม่รู้ (ยังไม่โหลด หรือโหลดไม่สำเร็จ)
+  // ต้องแยกจาก "คงเหลือ 0" ไม่งั้นเน็ตหลุดทีเดียวพนักงานจะเบิกไม่ได้เลย
+  Map<String, dynamic>? _medicalInfo;
+  String? _medicalInfoError;
+
+  double? get _medicalRemaining {
+    final info = _medicalInfo;
+    if (info == null || info['ok'] != true) return null;
+    final value = info['remaining'];
+    return value is num ? value.toDouble() : null;
+  }
+
+  String get _medicalAccountName {
+    final info = _medicalInfo;
+    final fromOdoo = (info?['employee_name'] ?? '').toString().trim();
+    if (fromOdoo.isNotEmpty) return fromOdoo;
+    return '${widget.user.firstname} ${widget.user.lastname}'.trim();
+  }
+
+  String _bankShortName(String? code) {
+    if (code == null || code.isEmpty) return '';
+    for (final bank in _bankOptions) {
+      if (bank['code'] == code) return bank['short'] ?? bank['name'] ?? code;
+    }
+    for (final bank in kThaiBanks) {
+      if (bank['code'] == code) return bank['short'] ?? code;
+    }
+    return code;
+  }
 
   @override
   void initState() {
@@ -235,6 +351,10 @@ class AddTimeScreenState extends State<AddTimeScreen> {
       _checkoutTimeController.text =
           _formatTimeOfDayToString(_selectedCheckoutTime!);
     }
+
+    // หมายเหตุของค่ารักษาพยาบาลสร้างอัตโนมัติ — ต้องอัปเดตทุกครั้งที่แก้จำนวนเงิน/เลขบัญชี
+    _amountController.addListener(_onMedicalFieldChanged);
+    _bankAccountController.addListener(_onMedicalFieldChanged);
 
     // _fetchLogs(); // Removed from initState, will be called by refreshData via didChangeDependencies or MainAppScreen
   }
@@ -329,17 +449,155 @@ class AddTimeScreenState extends State<AddTimeScreen> {
     }
   }
 
-  Future<void> _pickFile() async {
+  /// เลือกไฟล์แนบ — ค่ารักษาพยาบาลเลือกได้หลายไฟล์ ประเภทอื่นได้ไฟล์เดียว
+  Future<void> _pickFiles() async {
     // ใช้ ImagePicker แทน FilePicker เพื่อหลีกเลี่ยง READ_MEDIA_IMAGES permission
     final ImagePicker picker = ImagePicker();
-    final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+    final bool isMedical = _selectedReasonType == kMedicalReasonType;
 
-    if (image != null) {
-      setState(() {
-        _selectedFilePath = image.path;
-      });
+    if (!isMedical) {
+      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+      if (image != null) {
+        setState(() {
+          _selectedFilePaths
+            ..clear()
+            ..add(image.path);
+        });
+      }
+      return;
+    }
+
+    final List<XFile> images = await picker.pickMultiImage();
+    if (images.isEmpty) return;
+
+    // นับพื้นที่ว่างก่อนเพิ่ม ไม่งั้นจะเตือนเกินจริงเพราะไฟล์ถูกเพิ่มเข้าไปแล้ว
+    final int room = kMaxMedicalFiles - _selectedFilePaths.length;
+    final bool overflowed = images.length > room;
+
+    setState(() {
+      for (final image in images) {
+        if (_selectedFilePaths.length >= kMaxMedicalFiles) break;
+        if (!_selectedFilePaths.contains(image.path)) {
+          _selectedFilePaths.add(image.path);
+        }
+      }
+    });
+
+    if (overflowed) {
+      _showSnackBar('แนบไฟล์ได้สูงสุด $kMaxMedicalFiles ไฟล์', isError: true);
     }
   }
+
+  void _removeSelectedFileAt(int index) {
+    setState(() {
+      if (index >= 0 && index < _selectedFilePaths.length) {
+        _selectedFilePaths.removeAt(index);
+      }
+    });
+  }
+
+  // ============================================================
+  // ค่ารักษาพยาบาล
+  // ============================================================
+
+  /// ดึงวงเงินคงเหลือ + รายชื่อธนาคาร + บัญชีของพนักงาน จาก Odoo
+  Future<void> _fetchMedicalInfo() async {
+    if (mounted) {
+      setState(() {
+        _isLoadingMedicalInfo = true;
+        _medicalInfoError = null;
+      });
+    }
+    try {
+      final code = widget.user.employeeCode ?? '';
+      final info = await OdooRpcService()
+          .getMedicalExpenseInfo(code, excludePhpId: _editingRequestId);
+
+      if (!mounted) return;
+      setState(() {
+        _medicalInfo = info;
+        if (info == null) {
+          _medicalInfoError = 'ติดต่อระบบไม่ได้ — ยังไม่ทราบวงเงินคงเหลือ';
+        } else if (info['ok'] != true) {
+          _medicalInfoError = (info['message'] ?? '').toString().isNotEmpty
+              ? info['message'].toString()
+              : 'ไม่พบข้อมูลวงเงินของพนักงาน';
+        } else {
+          final banks = info['banks'];
+          if (banks is List && banks.isNotEmpty) {
+            _bankOptions = banks
+                .whereType<Map>()
+                .map((b) => {
+                      'code': (b['code'] ?? '').toString(),
+                      'name': (b['name'] ?? '').toString(),
+                      'short': (b['short'] ?? '').toString(),
+                    })
+                .toList();
+          }
+          // เติมบัญชีที่ผูกไว้กับพนักงานให้อัตโนมัติ (แก้ไขเองได้)
+          final defaultBank = (info['bank_name'] ?? '').toString();
+          final defaultAccount = (info['bank_account_number'] ?? '').toString();
+          if (_selectedBankCode == null &&
+              defaultBank.isNotEmpty &&
+              _bankOptions.any((b) => b['code'] == defaultBank)) {
+            _selectedBankCode = defaultBank;
+          }
+          if (_bankAccountController.text.trim().isEmpty &&
+              defaultAccount.isNotEmpty) {
+            _bankAccountController.text = defaultAccount;
+          }
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to fetch medical info: $e');
+      if (mounted) {
+        setState(() {
+          _medicalInfo = null;
+          _medicalInfoError = 'ติดต่อระบบไม่ได้ — ยังไม่ทราบวงเงินคงเหลือ';
+        });
+      }
+    } finally {
+      if (mounted) setState(() => _isLoadingMedicalInfo = false);
+      _syncMedicalNote();
+    }
+  }
+
+  /// ข้อความหมายเหตุอัตโนมัติ — ต้องตรงกับที่ Odoo สร้าง (_build_auto_note)
+  ///   ค่ารักษาพยาบาล 900.00 บาท
+  ///   ธ.ไทยพาณิชย์ เลขบัญชี 709-221-2267 น.ส.ปรียดา ฤทธิ์ดี
+  String _buildMedicalNote() {
+    final amount = double.tryParse(_amountController.text.trim()) ?? 0.0;
+    final buffer = StringBuffer();
+    buffer.write('ค่ารักษาพยาบาล ');
+    buffer.write(NumberFormat('#,##0.00').format(amount));
+    buffer.write(' บาท');
+
+    final parts = <String>[];
+    final bank = _bankShortName(_selectedBankCode);
+    if (bank.isNotEmpty) parts.add(bank);
+    final account = _bankAccountController.text.trim();
+    if (account.isNotEmpty) parts.add('เลขบัญชี $account');
+    final holder = _medicalAccountName;
+    if (holder.isNotEmpty) parts.add(holder);
+
+    if (parts.isNotEmpty) {
+      buffer.writeln();
+      buffer.write(parts.join(' '));
+    }
+    return buffer.toString();
+  }
+
+  /// อัปเดตช่องหมายเหตุให้ตรงกับข้อมูลที่เลือกไว้ (เฉพาะค่ารักษาพยาบาล)
+  void _syncMedicalNote() {
+    if (!mounted) return;
+    if (_selectedReasonType != kMedicalReasonType) return;
+    final note = _buildMedicalNote();
+    if (_userNoteController.text != note) {
+      _userNoteController.text = note;
+    }
+  }
+
+  void _onMedicalFieldChanged() => _syncMedicalNote();
 
   @override
   void didChangeDependencies() {
@@ -360,7 +618,10 @@ class AddTimeScreenState extends State<AddTimeScreen> {
     _checkinTimeController.dispose();
     _checkoutTimeController.dispose();
     _userNoteController.dispose();
+    _amountController.removeListener(_onMedicalFieldChanged);
     _amountController.dispose();
+    _bankAccountController.removeListener(_onMedicalFieldChanged);
+    _bankAccountController.dispose();
     super.dispose();
   }
 
@@ -641,20 +902,40 @@ class AddTimeScreenState extends State<AddTimeScreen> {
       }
     }
 
-    // ✅ ตรวจกฎ "ค่ารักษาพยาบาล" — บังคับแนบไฟล์ (ใบเสร็จ/ใบรับรองแพทย์)
-    if (_selectedReasonType == 'ค่ารักษาพยาบาล' && _selectedFilePath == null) {
-      // กรณีแก้ไข log เก่าที่มีไฟล์อยู่แล้ว → ผ่าน
-      final hasExistingFile = _editingRequestId != null &&
-          _logs.any((l) =>
-              l.id == _editingRequestId &&
-              l.filePath != null &&
-              l.filePath!.isNotEmpty);
-      if (!hasExistingFile) {
+    // ✅ ตรวจกฎ "ค่ารักษาพยาบาล"
+    if (_selectedReasonType == kMedicalReasonType) {
+      // 1) บังคับแนบไฟล์ (ใบเสร็จ/ใบรับรองแพทย์) — แนบได้มากกว่า 1 ไฟล์
+      if (_selectedFilePaths.isEmpty && _existingFilePaths.isEmpty) {
         _showSnackBar(
             'ประเภท "ค่ารักษาพยาบาล" ต้องแนบไฟล์ใบเสร็จ/ใบรับรองแพทย์',
             isError: true);
         return;
       }
+
+      // 2) บังคับระบุบัญชีที่ให้โอนเข้า
+      if (_selectedBankCode == null || _selectedBankCode!.isEmpty) {
+        _showSnackBar('กรุณาเลือกธนาคารที่ต้องการให้โอนเข้า', isError: true);
+        return;
+      }
+      if (_bankAccountController.text.trim().isEmpty) {
+        _showSnackBar('กรุณากรอกเลขบัญชีธนาคาร', isError: true);
+        return;
+      }
+
+      // 3) เบิกได้ไม่เกินวงเงินคงเหลือของปีนี้
+      //    ถ้ายังไม่รู้วงเงิน (ติดต่อ Odoo ไม่ได้) ให้ผ่านไปก่อน แล้วไปตรวจซ้ำตอนอนุมัติ
+      final remaining = _medicalRemaining;
+      final requested = double.tryParse(_amountController.text.trim()) ?? 0.0;
+      if (remaining != null && requested > remaining) {
+        _showSnackBar(
+            'ขอเบิกได้ไม่เกินวงเงินคงเหลือ '
+            '${NumberFormat('#,##0.00').format(remaining)} บาท',
+            isError: true);
+        return;
+      }
+
+      // หมายเหตุสร้างอัตโนมัติ — กันกรณีผู้ใช้ยังไม่ได้แตะช่องไหนเลย
+      _syncMedicalNote();
     }
 
     setState(() {
@@ -696,6 +977,15 @@ class AddTimeScreenState extends State<AddTimeScreen> {
         'reason_type': _selectedReasonType ?? '',
         'allowance_type': _selectedAllowanceTypeName ?? '',
         'amount': _amountController.text.trim(),
+        'bank_name': _selectedReasonType == kMedicalReasonType
+            ? (_selectedBankCode ?? '')
+            : '',
+        'bank_account_number': _selectedReasonType == kMedicalReasonType
+            ? _bankAccountController.text.trim()
+            : '',
+        'bank_account_name': _selectedReasonType == kMedicalReasonType
+            ? _medicalAccountName
+            : '',
       });
 
       if (_editingRequestId != null) {
@@ -703,11 +993,19 @@ class AddTimeScreenState extends State<AddTimeScreen> {
       }
 
       // ✅ แนบไฟล์ (ถ้ามี)
-      if (_selectedFilePath != null) {
-        request.files.add(await http.MultipartFile.fromPath(
-          'file', // ต้องตรงกับ key ของ API
-          _selectedFilePath!,
-        ));
+      // ค่ารักษาพยาบาลส่งเป็น files[] ได้หลายไฟล์ ประเภทอื่นยังใช้ key เดิม (file)
+      if (_selectedFilePaths.isNotEmpty) {
+        if (_selectedReasonType == kMedicalReasonType) {
+          for (final path in _selectedFilePaths) {
+            request.files
+                .add(await http.MultipartFile.fromPath('files[]', path));
+          }
+        } else {
+          request.files.add(await http.MultipartFile.fromPath(
+            'file', // ต้องตรงกับ key ของ API
+            _selectedFilePaths.first,
+          ));
+        }
       }
 
       // ส่ง request
@@ -848,10 +1146,18 @@ class AddTimeScreenState extends State<AddTimeScreen> {
       // ✅ Reset เพิ่มเติม
       _selectedReasonType = null;
       _amountController.clear();
-      _selectedFilePath = null;
+      _selectedFilePaths.clear();
+      _existingFilePaths = [];
       _selectedAllowanceTypeName = null;
       _amountReadonlyFromAllowance = false;
       _allowanceTypes = null;
+
+      // ค่ารักษาพยาบาล
+      _selectedBankCode = null;
+      _bankAccountController.clear();
+      _medicalInfo = null;
+      _medicalInfoError = null;
+      _isLoadingMedicalInfo = false;
 
       // เคลียร์ initial values
       _initialSelectedDate = null;
@@ -1071,10 +1377,24 @@ class AddTimeScreenState extends State<AddTimeScreen> {
         // คืนค่าประเภทค่าเบี้ยเลี้ยงที่เคยเลือกไว้ (ถ้ามี)
         _selectedAllowanceTypeName = log.allowanceType;
         _amountReadonlyFromAllowance = false;
+
+        // ไฟล์เดิมที่อัปโหลดไว้แล้ว — ถ้าไม่เลือกไฟล์ใหม่ ระบบจะคงไฟล์ชุดนี้ไว้
+        _selectedFilePaths.clear();
+        _existingFilePaths = List<String>.from(log.filePaths);
+
+        // ค่ารักษาพยาบาล: คืนค่าบัญชีที่เคยกรอกไว้
+        _selectedBankCode = log.bankName;
+        _bankAccountController.text = log.bankAccountNumber ?? '';
+        _medicalInfo = null;
+        _medicalInfoError = null;
+
         if (log.reasonType == 'ค่าเบี้ยเลี้ยงออกนอกสถานที่') {
           _fetchAllowanceTypes();
         } else {
           _allowanceTypes = null;
+        }
+        if (log.reasonType == kMedicalReasonType) {
+          _fetchMedicalInfo();
         }
       });
       // Scroll to the top of the screen to show the form
@@ -1088,6 +1408,198 @@ class AddTimeScreenState extends State<AddTimeScreen> {
       _showSnackBar('ไม่สามารถแก้ไขคำขอที่สถานะไม่ใช่ "รออนุมัติ" ได้',
           isError: true);
     }
+  }
+
+  /// แถบแสดงวงเงินค่ารักษาพยาบาลคงเหลือของปีนี้ (ดึงจาก Odoo)
+  Widget _buildMedicalQuotaBanner() {
+    if (_isLoadingMedicalInfo) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppColors.frame(Theme.of(context).colorScheme.primary)),
+        ),
+        child: Row(
+          children: [
+            const SizedBox(
+                width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2)),
+            const SizedBox(width: 12),
+            Text('กำลังตรวจสอบวงเงินคงเหลือ...',
+                style: GoogleFonts.ibmPlexSansThai(fontSize: 13)),
+          ],
+        ),
+      );
+    }
+
+    // ติดต่อ Odoo ไม่ได้ / ไม่พบพนักงาน — เตือนแต่ยังให้ยื่นคำขอได้ ไปตรวจซ้ำตอนอนุมัติ
+    if (_medicalInfoError != null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        decoration: BoxDecoration(
+          color: Colors.orange.shade50,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.orange.shade200),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(Icons.warning_amber_rounded, size: 20, color: Colors.orange.shade800),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(_medicalInfoError!,
+                  style: GoogleFonts.ibmPlexSansThai(
+                      fontSize: 13, color: Colors.orange.shade900)),
+            ),
+            TextButton(
+              onPressed: _fetchMedicalInfo,
+              child: Text('ลองใหม่', style: GoogleFonts.ibmPlexSansThai(fontSize: 13)),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final info = _medicalInfo;
+    if (info == null || info['ok'] != true) return const SizedBox.shrink();
+
+    final formatter = NumberFormat('#,##0.00');
+    final double limit = (info['limit'] as num?)?.toDouble() ?? 0.0;
+    final double approved = (info['used_approved'] as num?)?.toDouble() ?? 0.0;
+    final double pending = (info['used_pending'] as num?)?.toDouble() ?? 0.0;
+    final double remaining = (info['remaining'] as num?)?.toDouble() ?? 0.0;
+    final int? year = info['year'] as int?;
+    final bool isEmpty = remaining <= 0;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: isEmpty ? Colors.red.shade50 : Colors.green.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(
+            color: isEmpty ? Colors.red.shade200 : Colors.green.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(
+                isEmpty ? Icons.block : Icons.account_balance_wallet,
+                size: 18,
+                color: isEmpty ? Colors.red.shade700 : Colors.green.shade800,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'คงเหลือที่เบิกได้ ${formatter.format(remaining)} บาท',
+                  style: GoogleFonts.ibmPlexSansThai(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: isEmpty ? Colors.red.shade800 : Colors.green.shade900,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            'วงเงินปี ${year ?? DateTime.now().year}: ${formatter.format(limit)} บาท'
+            '  •  อนุมัติแล้ว ${formatter.format(approved)} บาท'
+            '  •  รออนุมัติ ${formatter.format(pending)} บาท',
+            style: GoogleFonts.ibmPlexSansThai(
+                fontSize: 12, color: Colors.grey.shade800),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ส่วนเลือกไฟล์แนบ — ค่ารักษาพยาบาลแนบได้หลายไฟล์ ประเภทอื่นได้ไฟล์เดียว
+  Widget _buildAttachmentPicker() {
+    final bool isMedical = _selectedReasonType == kMedicalReasonType;
+    final bool canAddMore =
+        !isMedical || _selectedFilePaths.length < kMaxMedicalFiles;
+
+    return Card(
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(8),
+        side: BorderSide(color: AppColors.frame(Theme.of(context).colorScheme.primary)),
+      ),
+      child: Column(
+        children: [
+          // ไฟล์ที่เพิ่งเลือกจากเครื่อง (ยังไม่อัปโหลด)
+          for (int i = 0; i < _selectedFilePaths.length; i++)
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.attach_file, color: Color(0xFF1A1A1A)),
+              title: Text(
+                _selectedFilePaths[i].split('/').last,
+                style: GoogleFonts.ibmPlexSansThai(fontSize: 14),
+                overflow: TextOverflow.ellipsis,
+              ),
+              trailing: IconButton(
+                icon: Icon(Icons.close, size: 20, color: Colors.red.shade700),
+                tooltip: 'เอาออก',
+                onPressed: () => _removeSelectedFileAt(i),
+              ),
+            ),
+
+          // ไฟล์เดิมบนเซิร์ฟเวอร์ (โหมดแก้ไข) — แตะเพื่อเปิดดู
+          if (_selectedFilePaths.isEmpty)
+            for (final path in _existingFilePaths)
+              ListTile(
+                dense: true,
+                leading: Icon(Icons.cloud_done, color: Colors.green.shade700),
+                title: Text(
+                  path.split('/').last,
+                  style: GoogleFonts.ibmPlexSansThai(fontSize: 14),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                subtitle: Text('ไฟล์ที่แนบไว้แล้ว',
+                    style: GoogleFonts.ibmPlexSansThai(
+                        fontSize: 11, color: Colors.grey.shade600)),
+                onTap: () => _openAttachment(context, path),
+              ),
+
+          if (_selectedFilePaths.isEmpty && _existingFilePaths.isEmpty)
+            ListTile(
+              dense: true,
+              leading: const Icon(Icons.attach_file, color: Color(0xFF1A1A1A)),
+              title: Text('ยังไม่ได้เลือกไฟล์',
+                  style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
+            ),
+
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                if (isMedical)
+                  Text(
+                    'เลือกแล้ว ${_selectedFilePaths.length}/$kMaxMedicalFiles ไฟล์',
+                    style: GoogleFonts.ibmPlexSansThai(
+                        fontSize: 12, color: Colors.grey.shade700),
+                  )
+                else
+                  const SizedBox.shrink(),
+                TextButton.icon(
+                  onPressed: canAddMore ? _pickFiles : null,
+                  icon: const Icon(Icons.add_photo_alternate, size: 18),
+                  label: Text(
+                    isMedical
+                        ? 'เพิ่มไฟล์'
+                        : (_selectedFilePaths.isEmpty ? 'เลือกไฟล์' : 'เปลี่ยนไฟล์'),
+                    style: GoogleFonts.ibmPlexSansThai(
+                        color: const Color(0xFF1A1A1A)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   bool _isSaveButtonDisabled() {
@@ -1111,7 +1623,7 @@ class AddTimeScreenState extends State<AddTimeScreen> {
         FocusScope.of(context).unfocus();
       },
       child: Scaffold(
-        appBar: AppBar(
+        appBar: AppGradientBar(
           title: const Text('เพิ่มเวลาเข้างาน / ออกงาน'),
           // No leading back button here, as this will be part of IndexedStack
         ),
@@ -1153,7 +1665,8 @@ class AddTimeScreenState extends State<AddTimeScreen> {
                         child: Card(
                           elevation: 4,
                           shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12)),
+                              borderRadius: BorderRadius.circular(12),
+                              side: BorderSide(color: AppColors.frame(Theme.of(context).colorScheme.primary))),
                           child: Padding(
                             padding: const EdgeInsets.all(20.0),
                             child: Column(
@@ -1326,7 +1839,7 @@ class AddTimeScreenState extends State<AddTimeScreen> {
 
                                       // เคลียร์จำนวนเงินเมื่อเปลี่ยนประเภทที่ไม่ต้องกรอกเงิน
                                       if (value != 'ค่าเบี้ยเลี้ยงออกนอกสถานที่' &&
-                                          value != 'ค่ารักษาพยาบาล' &&
+                                          value != kMedicalReasonType &&
                                           value != 'ค่าอาหาร' &&
                                           value != 'ค่าตัวนักแสดง ถ่าย content') {
                                         _amountController.clear();
@@ -1338,6 +1851,26 @@ class AddTimeScreenState extends State<AddTimeScreen> {
                                         _fetchAllowanceTypes();
                                       } else {
                                         _allowanceTypes = null;
+                                      }
+
+                                      // ค่ารักษาพยาบาล: ดึงวงเงินคงเหลือ + บัญชีของพนักงาน
+                                      if (value == kMedicalReasonType) {
+                                        _fetchMedicalInfo();
+                                      } else {
+                                        _selectedBankCode = null;
+                                        _bankAccountController.clear();
+                                        _medicalInfo = null;
+                                        _medicalInfoError = null;
+                                        _isLoadingMedicalInfo = false;
+                                        // หมายเหตุกลับมาแก้ไขเองได้ตามปกติ
+                                        _userNoteController.clear();
+                                        // ประเภทอื่นแนบได้ไฟล์เดียว
+                                        if (_selectedFilePaths.length > 1) {
+                                          final first = _selectedFilePaths.first;
+                                          _selectedFilePaths
+                                            ..clear()
+                                            ..add(first);
+                                        }
                                       }
                                     });
                                   },
@@ -1421,9 +1954,15 @@ class AddTimeScreenState extends State<AddTimeScreen> {
                                   ],
                                 ],
 
+                                // 👉 ค่ารักษาพยาบาล — แสดงวงเงินคงเหลือที่เบิกได้ในปีนี้
+                                if (_selectedReasonType == kMedicalReasonType) ...[
+                                  const SizedBox(height: 16),
+                                  _buildMedicalQuotaBanner(),
+                                ],
+
                                 // 👉 แสดงฟิลด์จำนวนเงินเมื่อเลือก ค่าเบี๊ยเลี้ยงฯ หรือ ค่ารักษาพยาบาล
                                 if (_selectedReasonType == 'ค่าเบี้ยเลี้ยงออกนอกสถานที่' ||
-                                    _selectedReasonType == 'ค่ารักษาพยาบาล' ||
+                                    _selectedReasonType == kMedicalReasonType ||
                                     _selectedReasonType == 'ค่าอาหาร' ||
                                     _selectedReasonType == 'ค่าตัวนักแสดง ถ่าย content') ...[
                                   const SizedBox(height: 16),
@@ -1445,10 +1984,16 @@ class AddTimeScreenState extends State<AddTimeScreen> {
                                       hintText: 'กรอกจำนวนเงิน',
                                       hintStyle: GoogleFonts.ibmPlexSansThai(
                                           color: Colors.grey),
+                                      helperText: _selectedReasonType == kMedicalReasonType &&
+                                              _medicalRemaining != null
+                                          ? 'เบิกได้ไม่เกิน ${NumberFormat('#,##0.00').format(_medicalRemaining)} บาท'
+                                          : null,
+                                      helperStyle: GoogleFonts.ibmPlexSansThai(
+                                          color: Colors.grey.shade700),
                                     ),
                                     validator: (value) {
                                       if (_selectedReasonType == 'ค่าเบี้ยเลี้ยงออกนอกสถานที่' ||
-                                          _selectedReasonType == 'ค่ารักษาพยาบาล' ||
+                                          _selectedReasonType == kMedicalReasonType ||
                                           _selectedReasonType == 'ค่าอาหาร' ||
                                           _selectedReasonType == 'ค่าตัวนักแสดง ถ่าย content') {
                                         if (value == null || value.trim().isEmpty) {
@@ -1458,6 +2003,93 @@ class AddTimeScreenState extends State<AddTimeScreen> {
                                         if (amount == null || amount <= 0) {
                                           return 'กรุณากรอกจำนวนเงินที่ถูกต้อง';
                                         }
+                                        // ค่ารักษาพยาบาลเบิกได้ไม่เกินวงเงินคงเหลือของปีนี้
+                                        if (_selectedReasonType == kMedicalReasonType) {
+                                          final remaining = _medicalRemaining;
+                                          if (remaining != null && amount > remaining) {
+                                            return 'เกินวงเงินคงเหลือ '
+                                                '(${NumberFormat('#,##0.00').format(remaining)} บาท)';
+                                          }
+                                        }
+                                      }
+                                      return null;
+                                    },
+                                  ),
+                                ],
+
+                                // 👉 ค่ารักษาพยาบาล — บัญชีที่ต้องการให้โอนเข้า
+                                if (_selectedReasonType == kMedicalReasonType) ...[
+                                  const SizedBox(height: 16),
+                                  DropdownButtonFormField<String>(
+                                    value: _bankOptions.any((b) => b['code'] == _selectedBankCode)
+                                        ? _selectedBankCode
+                                        : null,
+                                    isExpanded: true,
+                                    autovalidateMode: AutovalidateMode.onUserInteraction,
+                                    decoration: InputDecoration(
+                                      labelText: 'ธนาคารที่ต้องการให้โอนเข้า',
+                                      labelStyle: GoogleFonts.ibmPlexSansThai(),
+                                      prefixIcon: const Icon(Icons.account_balance),
+                                      border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8)),
+                                      filled: true,
+                                      fillColor: Colors.grey.shade50,
+                                    ),
+                                    items: _bankOptions.map((bank) {
+                                      final code = bank['code'] ?? '';
+                                      final name = bank['name'] ?? code;
+                                      return DropdownMenuItem<String>(
+                                        value: code,
+                                        child: Text(name,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
+                                      );
+                                    }).toList(),
+                                    validator: (value) {
+                                      if (value == null || value.isEmpty) {
+                                        return 'กรุณาเลือกธนาคารที่ต้องการให้โอนเข้า';
+                                      }
+                                      return null;
+                                    },
+                                    onChanged: (value) {
+                                      setState(() => _selectedBankCode = value);
+                                      _syncMedicalNote();
+                                    },
+                                  ),
+                                  const SizedBox(height: 16),
+                                  TextFormField(
+                                    controller: _bankAccountController,
+                                    autovalidateMode: AutovalidateMode.onUserInteraction,
+                                    keyboardType: TextInputType.text,
+                                    textInputAction: TextInputAction.done,
+                                    onFieldSubmitted: (_) =>
+                                        FocusScope.of(context).unfocus(),
+                                    decoration: InputDecoration(
+                                      labelText: 'เลขบัญชีธนาคาร',
+                                      labelStyle: GoogleFonts.ibmPlexSansThai(),
+                                      prefixIcon: const Icon(Icons.credit_card),
+                                      border: OutlineInputBorder(
+                                          borderRadius: BorderRadius.circular(8)),
+                                      filled: true,
+                                      fillColor: Colors.grey.shade50,
+                                      hintText: 'เช่น 709-221-2267',
+                                      hintStyle: GoogleFonts.ibmPlexSansThai(
+                                          color: Colors.grey),
+                                      helperText: 'ชื่อบัญชี: $_medicalAccountName',
+                                      helperStyle: GoogleFonts.ibmPlexSansThai(
+                                          color: Colors.grey.shade700),
+                                    ),
+                                    validator: (value) {
+                                      if (_selectedReasonType != kMedicalReasonType) {
+                                        return null;
+                                      }
+                                      if (value == null || value.trim().isEmpty) {
+                                        return 'กรุณากรอกเลขบัญชีธนาคาร';
+                                      }
+                                      final digits =
+                                          value.replaceAll(RegExp(r'[^0-9]'), '');
+                                      if (digits.length < 10) {
+                                        return 'เลขบัญชีต้องมีอย่างน้อย 10 หลัก';
                                       }
                                       return null;
                                     },
@@ -1472,11 +2104,11 @@ class AddTimeScreenState extends State<AddTimeScreen> {
                                         color: Colors.black),
                                     children: [
                                       TextSpan(
-                                        text: _selectedReasonType == 'ค่ารักษาพยาบาล'
+                                        text: _selectedReasonType == kMedicalReasonType
                                             ? 'ไฟล์แนบ (ใบเสร็จ/ใบรับรองแพทย์) '
                                             : 'ไฟล์แนบ ',
                                       ),
-                                      if (_selectedReasonType == 'ค่ารักษาพยาบาล')
+                                      if (_selectedReasonType == kMedicalReasonType)
                                         const TextSpan(
                                           text: '*',
                                           style: TextStyle(color: Colors.red),
@@ -1490,40 +2122,33 @@ class AddTimeScreenState extends State<AddTimeScreen> {
                                     ],
                                   ),
                                 ),
+                                if (_selectedReasonType == kMedicalReasonType)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 2),
+                                    child: Text(
+                                      'แนบได้มากกว่า 1 ไฟล์ (สูงสุด $kMaxMedicalFiles ไฟล์)',
+                                      style: GoogleFonts.ibmPlexSansThai(
+                                          fontSize: 12, color: Colors.grey.shade700),
+                                    ),
+                                  ),
                                 const SizedBox(height: 8),
-                                Card(
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(8),
-                                    side:
-                                        BorderSide(color: Colors.grey.shade300),
-                                  ),
-                                  child: ListTile(
-                                    leading: const Icon(Icons.attach_file,
-                                        color: const Color(0xFF1A1A1A)),
-                                    title: Text(
-                                      _selectedFilePath != null
-                                          ? _selectedFilePath!.split('/').last
-                                          : 'ยังไม่ได้เลือกไฟล์',
-                                      style: GoogleFonts.ibmPlexSansThai(fontSize: 14),
-                                    ),
-                                    trailing: TextButton(
-                                      onPressed: _pickFile,
-                                      child: Text(
-                                        _selectedFilePath == null
-                                            ? 'เลือกไฟล์'
-                                            : 'เปลี่ยนไฟล์',
-                                        style: GoogleFonts.ibmPlexSansThai(
-                                            color: const Color(0xFF1A1A1A)),
-                                      ),
-                                    ),
-                                  ),
-                                ),
+                                _buildAttachmentPicker(),
 
                                 const SizedBox(height: 16),
 
                                 TextFormField(
                                   controller: _userNoteController,
-                                  maxLines: 3,
+                                  // หมายเหตุอัตโนมัติยาวกว่า 3 บรรทัดได้ (ชื่อ-นามสกุลยาว)
+                                  // ตรึงไว้ 3 บรรทัดแล้วข้อความจะโดนตัดกลางคำ
+                                  minLines: 3,
+                                  maxLines:
+                                      _selectedReasonType == kMedicalReasonType ? null : 3,
+                                  readOnly: _selectedReasonType == kMedicalReasonType,
+                                  // ค่ารักษาพยาบาลใช้ฟอนต์เล็กลง ข้อความยาวจะได้แสดงครบในกรอบ
+                                  style: _selectedReasonType == kMedicalReasonType
+                                      ? GoogleFonts.ibmPlexSansThai(
+                                          fontSize: 13, height: 1.35)
+                                      : GoogleFonts.ibmPlexSansThai(),
                                   textInputAction:
                                       TextInputAction.done, // เพิ่มตรงนี้
                                   onFieldSubmitted: (_) {
@@ -1531,13 +2156,17 @@ class AddTimeScreenState extends State<AddTimeScreen> {
                                     FocusScope.of(context).unfocus();
                                   },
                                   decoration: InputDecoration(
-                                    labelText: 'หมายเหตุของผู้ใช้งาน (ถ้ามี)',
+                                    labelText: _selectedReasonType == kMedicalReasonType
+                                        ? 'หมายเหตุ (ระบบสร้างให้อัตโนมัติ)'
+                                        : 'หมายเหตุของผู้ใช้งาน (ถ้ามี)',
                                     labelStyle: GoogleFonts.ibmPlexSansThai(),
                                     prefixIcon: const Icon(Icons.notes),
                                     border: OutlineInputBorder(
                                         borderRadius: BorderRadius.circular(8)),
                                     filled: true,
-                                    fillColor: Colors.grey.shade50,
+                                    fillColor: _selectedReasonType == kMedicalReasonType
+                                        ? Colors.grey.shade200
+                                        : Colors.grey.shade50,
                                   ),
                                 ),
                                 const SizedBox(height: 24),
@@ -1695,6 +2324,21 @@ class AddTimeScreenState extends State<AddTimeScreen> {
                                             ),
                                           ),
                                         ),
+                                      if (log.bankName != null ||
+                                          log.bankAccountNumber != null)
+                                        Padding(
+                                          padding:
+                                              const EdgeInsets.only(top: 4),
+                                          child: Text(
+                                            'โอนเข้า: ${_bankShortName(log.bankName)} '
+                                            '${log.bankAccountNumber ?? ''}',
+                                            style:
+                                                GoogleFonts.ibmPlexSansThai(
+                                              fontSize: 13,
+                                              color: Colors.grey.shade800,
+                                            ),
+                                          ),
+                                        ),
                                       if (log.userNote != null &&
                                           log.userNote!.isNotEmpty &&
                                           log.userNote != 'NULL')
@@ -1755,17 +2399,22 @@ class AddTimeScreenState extends State<AddTimeScreen> {
                                         runSpacing: 4,
                                         alignment: WrapAlignment.end,
                                         children: [
-                                          if (log.filePath != null &&
-                                              log.filePath!.isNotEmpty)
+                                          // ค่ารักษาพยาบาลแนบได้หลายไฟล์ — ทำปุ่มแยกทีละไฟล์
+                                          for (int i = 0;
+                                              i < log.filePaths.length;
+                                              i++)
                                             TextButton.icon(
                                               onPressed: () {
                                                 _openAttachment(context,
-                                                    log.filePath!);
+                                                    log.filePaths[i]);
                                               },
                                               icon: const Icon(
                                                   Icons.attach_file,
                                                   size: 18),
-                                              label: Text('ดูไฟล์แนบ',
+                                              label: Text(
+                                                  log.filePaths.length > 1
+                                                      ? 'ไฟล์แนบ ${i + 1}'
+                                                      : 'ดูไฟล์แนบ',
                                                   style: GoogleFonts
                                                       .ibmPlexSansThai()),
                                             ),

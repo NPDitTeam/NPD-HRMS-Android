@@ -9,6 +9,8 @@ import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:pdf/pdf.dart';
+import 'odoo_rpc_service.dart';
+import 'ui/app_theme.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 import 'package:path_provider/path_provider.dart';
@@ -331,6 +333,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
       data['expense_provident'],
       data['expense_advance'],
       data['expense_loan'],
+      data['expense_welfare_fund'],
       data['expense_other'],
       data['expense_ksl'],
       data['expense_insurance'],
@@ -423,6 +426,10 @@ class _PayslipScreenState extends State<PayslipScreen> {
               {'label': 'กยศ.', 'value': data['expense_ksl']},
               {'label': 'เบิกเงินล่วงหน้า', 'value': data['expense_advance']},
               {'label': 'เงินกู้', 'value': data['expense_loan']},
+              {
+                'label': 'หักเงินสงเคราะห์ลูกจ้าง',
+                'value': data['expense_welfare_fund']
+              },
               {'label': 'หักอื่นๆ', 'value': data['expense_other']},
             ], isDeduction: true),
 
@@ -487,7 +494,7 @@ class _PayslipScreenState extends State<PayslipScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppGradientBar(
         title: Text('สลิปเงินเดือน', style: GoogleFonts.ibmPlexSansThai()),
         actions: [
           IconButton(
@@ -648,48 +655,56 @@ class _PayslipScreenState extends State<PayslipScreen> {
       return NumberFormat('#,##0.00', 'th_TH').format(numValue);
     }
 
+    // ⚠️ ค่าสำรองเท่านั้น — แหล่งความจริงคือ Odoo (`payroll.salary._company_info_by_key`)
+    //    ใช้เมื่อดึงจาก Odoo ไม่ได้ (เน็ตล่ม) เพื่อไม่ให้หัวสลิปว่าง
+    //    ถ้าย้ายออฟฟิศ ให้แก้ที่ Odoo เป็นหลัก แล้วค่อยตามมาแก้ตรงนี้ทีหลัง
     Map<String, String> getCompanyInfo(String? company) {
       switch (company) {
         case 'นภดลเอสกรุ๊ปจำกัด':
           return {
             'name': 'บริษัท นภดล เอส กรุ๊ป จำกัด',
             'address':
-                'ที่อยู่ 156 แขวงบางยี่ขัน เขตบางพลัด กรุงเทพมหานคร 10700  โทร. / แฟกซ์. 02-433-5556'
+                'ที่อยู่ 85/13-16 ถนนอรุณอมรินทร์ แขวงอรุณอมรินทร์ เขตบางกอกน้อย กรุงเทพมหานคร 10700  โทร. / แฟกซ์. 02-433-5556'
           };
         case 'เอ็นพีดีสตีลเทคจำกัด':
           return {
             'name': 'บริษัท เอ็นพีดี สตีลเทค จำกัด',
             'address':
-                'ที่อยู่ 47/4 หมู่ 2 ตำบลลาดหลุมแก้ว อำเภอลาดหลุมแก้ว จังหวัดปทุมธานี 12140  โทร. / แฟกซ์. 02-433-5556'
+                'ที่อยู่ 47/4 หมู่ที่ 2 ตำบลลาดหลุมแก้ว อำเภอลาดหลุมแก้ว จ.ปทุมธานี 12140  โทร. / แฟกซ์. 02-433-5556'
           };
         case 'เอ็นพีดีโลจิสติกส์จำกัด':
           return {
             'name': 'บริษัท เอ็นพีดี โลจิสติกส์ จำกัด',
             'address':
-                'ที่อยู่ 47/4 หมู่ 2 ตำบลลาดหลุมแก้ว อำเภอลาดหลุมแก้ว จังหวัดปทุมธานี 12140  โทร. / แฟกซ์. 02-433-5556'
+                'ที่อยู่ 47/4 หมู่ที่ 2 ตำบลลาดหลุมแก้ว อำเภอลาดหลุมแก้ว จ.ปทุมธานี 12140  โทร. / แฟกซ์. 02-433-5556'
           };
         case 'นภดลอินเตอร์เทรดดิ้งจำกัด':
           return {
             'name': 'บริษัท นภดล อินเตอร์เทรดดิ้ง จำกัด',
             'address':
-                'ที่อยู่ 154 แขวงบางยี่ขัน เขตบางพลัด กรุงเทพมหานคร 10700  โทร. / แฟกซ์. 02-433-5556'
+                'ที่อยู่ 85/13-16 ถนนอรุณอมรินทร์ แขวงอรุณอมรินทร์ เขตบางกอกน้อย กรุงเทพมหานคร 10700  โทร. / แฟกซ์. 02-433-5556'
           };
         case 'นภดลกรุงเทพจำกัด':
           return {
             'name': 'บริษัท นภดล กรุงเทพ จำกัด',
             'address':
-                'ที่อยู่ 36/10 หมู่ 2 ตำบลบางเตย อำเภอสามพราน จังหวัดนครปฐม 73210  โทร. / แฟกซ์. 02-433-5556'
+                'ที่อยู่ 36/10 หมู่ที่ 2 ตำบลบางเตย อำเภอสามพราน จ.นครปฐม 73210  โทร. / แฟกซ์. 02-433-5556'
           };
         default:
           return {
             'name': 'บริษัท นภดล เอส กรุ๊ป จำกัด',
             'address':
-                'ที่อยู่ 156 แขวงบางยี่ขัน เขตบางพลัด กรุงเทพมหานคร 10700  โทร. / แฟกซ์. 02-433-5556'
+                'ที่อยู่ 85/13-16 ถนนอรุณอมรินทร์ แขวงอรุณอมรินทร์ เขตบางกอกน้อย กรุงเทพมหานคร 10700  โทร. / แฟกซ์. 02-433-5556'
           };
       }
     }
 
-    final companyInfo = getCompanyInfo(data['company']?.toString());
+    // ✅ เอาชื่อ/ที่อยู่จาก Odoo ก่อน (ตัวเดียวกับสลิป PDF ฝั่ง Odoo)
+    //    ดึงไม่ได้ค่อยตกมาใช้ค่าสำรองในเครื่อง
+    final odooInfo = await OdooRpcService()
+        .getCompanyInfo(widget.user.employeeCode ?? '');
+    final companyInfo =
+        odooInfo ?? getCompanyInfo(data['company']?.toString());
 
     // Calculate these variables here so they can be passed to the next function
     final latenessDeduction =

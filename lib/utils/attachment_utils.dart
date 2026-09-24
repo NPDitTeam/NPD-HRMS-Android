@@ -10,6 +10,10 @@ import 'package:url_launcher/url_launcher.dart';
 /// - ใบลา: เก็บเป็น 'uploads/xxx.jpg' หรือ '../uploads/xxx.jpg' อิงจาก root ของโดเมน
 const String kAttachmentDomain = 'https://npdhrms.com/';
 
+/// สีปุ่ม "ดูไฟล์แนบ" — ตายตัว ไม่ผูกกับธีมที่ผู้ใช้เลือก
+/// เพราะปุ่มวางอยู่บนพื้นขาวของการ์ด ถ้าใช้สีจากธีมจะมองไม่เห็นเมื่อเปลี่ยนสีแอป
+const Color kAttachmentButtonColor = Color(0xFF1A1A1A);
+
 /// ตัด prefix แบบ relative (../ , ./ , / ) ออกให้เหลือ path สะอาด
 String _cleanRelativePath(String filePath) {
   String cleaned = filePath.trim().replaceAll('\\', '/');
@@ -161,6 +165,9 @@ Widget buildAttachmentButton({
   return Align(
     alignment: alignment,
     child: TextButton.icon(
+      // ระบุสีตรงๆ ไม่พึ่ง theme — ปุ่มนี้อยู่บนพื้นขาวเสมอ
+      // ถ้าปล่อยให้รับสีจากธีม เวลาผู้ใช้เปลี่ยนสีแอปจะกลายเป็นขาวบนขาว มองไม่เห็น
+      style: TextButton.styleFrom(foregroundColor: kAttachmentButtonColor),
       onPressed: () => openAttachmentUrl(
         context,
         urlBuilder(filePath),

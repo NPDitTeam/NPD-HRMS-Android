@@ -9,6 +9,7 @@ import 'add_time_screen.dart' show AddTimeLog;
 import 'main.dart' show User;
 import 'utils/attachment_utils.dart';
 import 'widgets/expandable_history_card.dart';
+import 'ui/app_theme.dart';
 
 /// หน้า "ประวัติการเพิ่มเวลาทั้งหมด" — เลือกดูย้อนหลังได้ทีละเดือน/ปี
 /// รูปแบบเดียวกับ FullCheckinHistoryScreen ของเมนูลงเวลา
@@ -120,7 +121,7 @@ class _FullAddTimeHistoryScreenState extends State<FullAddTimeHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppGradientBar(
         title: Text('ประวัติการเพิ่มเวลาทั้งหมด',
             style: GoogleFonts.ibmPlexSansThai()),
         actions: [
@@ -163,7 +164,7 @@ class _FullAddTimeHistoryScreenState extends State<FullAddTimeHistoryScreen> {
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 12),
               decoration: BoxDecoration(
-                border: Border.all(color: Colors.grey.shade300),
+                border: Border.all(color: AppColors.frame(Theme.of(context).colorScheme.primary)),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: DropdownButtonHideUnderline(
@@ -191,7 +192,7 @@ class _FullAddTimeHistoryScreenState extends State<FullAddTimeHistoryScreen> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12),
             decoration: BoxDecoration(
-              border: Border.all(color: Colors.grey.shade300),
+              border: Border.all(color: AppColors.frame(Theme.of(context).colorScheme.primary)),
               borderRadius: BorderRadius.circular(8),
             ),
             child: DropdownButtonHideUnderline(
