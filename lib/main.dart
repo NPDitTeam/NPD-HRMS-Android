@@ -13,6 +13,7 @@ import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:image_picker/image_picker.dart';
 
 // Import Your Screens
 import 'package:path_provider/path_provider.dart';
@@ -21,6 +22,9 @@ import 'odoo_rpc_service.dart';
 import 'checkin_screen.dart';
 import 'notification_service.dart';
 import 'app_bottom_nav_bar.dart';
+import 'approvals_hub_screen.dart';
+import 'profile_photo_service.dart';
+import 'ui/app_theme.dart';
 import 'add_time_screen.dart';
 import 'leave_screen.dart';
 import 'payslip_screen.dart';
@@ -94,6 +98,7 @@ Future<void> _safeClearPrefs() async {
   final Map<String, Object> keepKeys = {};
   for (final key in prefs.getKeys()) {
     if (key.startsWith('warning_read_count_') ||
+        key.startsWith('warning_notified_count_') ||
         key.startsWith('approver_seen_leave_') ||
         key.startsWith('approver_seen_addtime_') ||
         key.startsWith('req_leave_state_') ||
@@ -124,8 +129,12 @@ class ThemeController extends ChangeNotifier {
   ThemeController._();
   static final ThemeController instance = ThemeController._();
 
-  // ✅ สีเริ่มต้น = เหลือง NPD เดิม
-  static const Color defaultColor = Color(0xFFFFD600);
+  // ✅ สีเริ่มต้น = เหลือง NPD
+  static const Color defaultColor = Color(0xFFFFE144);
+
+  /// สีเหลืองเดิมก่อนเปลี่ยนเป็น #FFE144 — เครื่องที่เคยใช้ค่าเริ่มต้นเดิมจะถูก
+  /// ย้ายมาใช้สีใหม่ให้เอง (ค่าที่บันทึกไว้เท่ากับสีเริ่มต้นเดิม = ยังไม่เคยเลือกสีเอง)
+  static const Color legacyDefaultColor = Color(0xFFFFD600);
 
   Color _primaryColor = defaultColor;
   Color get primaryColor => _primaryColor;
@@ -136,7 +145,8 @@ class ThemeController extends ChangeNotifier {
   Future<void> loadForUser(int userId) async {
     final prefs = await SharedPreferences.getInstance();
     final saved = prefs.getInt('theme_color_$userId');
-    final newColor = saved != null ? Color(saved) : defaultColor;
+    Color newColor = saved != null ? Color(saved) : defaultColor;
+    if (newColor.value == legacyDefaultColor.value) newColor = defaultColor;
     // ป้องกัน notify ซ้ำเมื่อค่าไม่เปลี่ยน (กัน infinite rebuild)
     if (newColor.value == _primaryColor.value) return;
     _primaryColor = newColor;
@@ -225,18 +235,6 @@ class _MyAppState extends State<MyApp> {
   Widget build(BuildContext context) {
     // ✅ สีหลักของแอป (อ่านจาก ThemeController — เปลี่ยนได้รายผู้ใช้)
     final Color npdYellow = ThemeController.instance.primaryColor;
-    final Color npdDarkYellow = npdYellow.withOpacity(0.85);
-
-    // ✅ กฎสีตัวอักษรบนพื้นสีหลัก:
-    //   - เหลือง NPD (ค่าเริ่มต้น) → ใช้สีดำ
-    //   - สีอื่นๆ ทั้งหมด → ใช้สีขาว
-    final bool isDefaultYellow =
-        npdYellow.value == ThemeController.defaultColor.value;
-    final Color npdBlack =
-        isDefaultYellow ? const Color(0xFF1A1A1A) : Colors.white;
-    final Color npdOrange = npdYellow;
-
-    final Color darkText = const Color(0xFF1A1A1A);
 
     return MaterialApp(
       // ✅ ล็อกขนาด Text ไม่ให้เปลี่ยนตามการตั้งค่าของมือถือ
@@ -247,111 +245,8 @@ class _MyAppState extends State<MyApp> {
         );
       },
       title: 'NPD HRMS',
-      theme: ThemeData(
-        colorScheme: ColorScheme.light(
-          primary: npdYellow,
-          secondary: npdBlack,
-          surface: Colors.white,
-          error: Colors.red.shade700,
-          onPrimary: npdBlack,
-          onSecondary: Colors.white,
-          onSurface: darkText,
-          onError: Colors.white,
-          primaryContainer: npdYellow,
-        ),
-        scaffoldBackgroundColor: Colors.white,
-        textTheme: GoogleFonts.ibmPlexSansThaiTextTheme(
-          Theme.of(context).textTheme,
-        ).apply(bodyColor: darkText),
-        appBarTheme: AppBarTheme(
-          backgroundColor: npdYellow,
-          foregroundColor: npdBlack,
-          elevation: 0,
-          centerTitle: true,
-          iconTheme: IconThemeData(color: npdBlack),
-          titleTextStyle: GoogleFonts.ibmPlexSansThai(
-            color: npdBlack,
-            fontSize: 20,
-            fontWeight: FontWeight.w600,
-          ),
-        ),
-        cardTheme: CardThemeData(
-          elevation: 2,
-          shadowColor: Colors.black.withOpacity(0.08),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(16)),
-          ),
-          color: Colors.white,
-          margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 0),
-        ),
-        elevatedButtonTheme: ElevatedButtonThemeData(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: npdYellow,
-            foregroundColor: npdBlack,
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-            textStyle: GoogleFonts.ibmPlexSansThai(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-        textButtonTheme: TextButtonThemeData(
-          style: TextButton.styleFrom(
-            foregroundColor: npdBlack,
-            textStyle: GoogleFonts.ibmPlexSansThai(fontSize: 16),
-          ),
-        ),
-        outlinedButtonTheme: OutlinedButtonThemeData(
-          style: OutlinedButton.styleFrom(
-            foregroundColor: npdBlack,
-            side: BorderSide(color: npdYellow, width: 2),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
-            textStyle: GoogleFonts.ibmPlexSansThai(fontSize: 16),
-          ),
-        ),
-        snackBarTheme: SnackBarThemeData(
-          behavior: SnackBarBehavior.fixed,
-          backgroundColor: npdBlack,
-          contentTextStyle: GoogleFonts.ibmPlexSansThai(color: Colors.white),
-        ),
-        inputDecorationTheme: InputDecorationTheme(
-          filled: true,
-          fillColor: Colors.white,
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.grey.shade300),
-          ),
-          enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: Colors.grey.shade300),
-          ),
-          focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-            borderSide: BorderSide(color: npdYellow, width: 2),
-          ),
-          labelStyle: GoogleFonts.ibmPlexSansThai(color: darkText),
-          hintStyle: GoogleFonts.ibmPlexSansThai(color: Colors.grey.shade500),
-          prefixIconColor: npdYellow,
-        ),
-        progressIndicatorTheme: ProgressIndicatorThemeData(
-          color: npdYellow,
-          linearTrackColor: npdYellow.withOpacity(0.3),
-        ),
-        bottomNavigationBarTheme: BottomNavigationBarThemeData(
-          backgroundColor: npdYellow,
-          selectedItemColor: npdBlack,
-          unselectedItemColor: Colors.black54,
-          type: BottomNavigationBarType.fixed,
-          showUnselectedLabels: true,
-          selectedLabelStyle: GoogleFonts.ibmPlexSansThai(fontSize: 12, fontWeight: FontWeight.w600),
-          unselectedLabelStyle: GoogleFonts.ibmPlexSansThai(fontSize: 11),
-        ),
-      ),
+      // กฎสีทั้งหมดอยู่ใน AppTheme (ชุดเดียวกับแอป Odoo 18) ที่นี่แค่ส่งสีองค์กรเข้าไป
+      theme: AppTheme.light(npdYellow),
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
         GlobalWidgetsLocalizations.delegate,
@@ -656,135 +551,118 @@ class _PinLoginScreenState extends State<PinLoginScreen> {
     }
   }
 
+  /// โลโก้ที่ติดมากับแอป — ใช้เมื่อองค์กรยังไม่ได้ตั้งโลโก้ หรือโหลดโลโก้ไม่ได้
+  Widget get _bundledLogo =>
+      Image.asset('assets/npd_180x180_padded.png', fit: BoxFit.contain);
+
   @override
   Widget build(BuildContext context) {
-    // ✅ ใช้สีจาก Theme — เปลี่ยนตาม ThemeController อัตโนมัติ
     final scheme = Theme.of(context).colorScheme;
-    final Color npdYellow = scheme.primary;
-    final Color npdBlack = scheme.onPrimary;
+    // จุด PIN ใช้ ink ไม่ใช่สีองค์กรตรง ๆ — เหลือง NPD บนพื้นขาวมองแทบไม่เห็น
+    final Color ink = AppColors.ink(scheme.primary);
 
-    return Scaffold(
-      body: Container(
-        width: double.infinity,
-        height: double.infinity,
-        decoration: BoxDecoration(
-          // ✅ ปรับ gradient ให้คงโทนสีไว้ที่ด้านล่างด้วย — ตัวเลข numpad อ่านง่ายขึ้น
-          gradient: LinearGradient(
-            colors: [
-              npdYellow, // สีหลักเข้ม (บนสุด)
-              Color.lerp(npdYellow, Colors.white, 0.25) ?? npdYellow, // อ่อน 25%
-              Color.lerp(npdYellow, Colors.white, 0.55) ?? npdYellow, // อ่อน 55%
-              Color.lerp(npdYellow, Colors.white, 0.78) ?? Colors.white, // อ่อน 78% (มีโทนสีหลัก)
-            ],
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            stops: const [0.0, 0.3, 0.65, 1.0],
-          ),
-        ),
-        child: SafeArea(
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.dark
+          .copyWith(statusBarColor: Colors.transparent),
+      child: Scaffold(
+        backgroundColor: AppColors.surface,
+        body: SafeArea(
           child: Column(
             children: [
-              // ✅ ส่วนบน - โลโก้ + ข้อความ + PIN dots
               Expanded(
-                flex: 4,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    // โลโก้ในวงกลมขาว
-                    Container(
-                      padding: const EdgeInsets.all(16),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withOpacity(0.1),
-                            blurRadius: 20,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
-                      ),
-                      child: Image.asset(
-                        'assets/npd_180x180_padded.png',
-                        width: 80,
-                        height: 80,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    Text(
-                      'NPD HRMS',
-                      style: GoogleFonts.ibmPlexSansThai(
-                        fontSize: 28,
-                        fontWeight: FontWeight.w700,
-                        color: npdBlack,
-                        letterSpacing: 1.5,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'ระบุรหัส PIN 6 หลัก',
-                      style: GoogleFonts.ibmPlexSansThai(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w400,
-                        color: npdBlack.withOpacity(0.6),
-                      ),
-                    ),
-                    const SizedBox(height: 28),
-                    // PIN dots
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: List.generate(
-                        6,
-                        (index) => AnimatedContainer(
-                          duration: const Duration(milliseconds: 200),
-                          curve: Curves.easeInOut,
-                          margin: const EdgeInsets.symmetric(horizontal: 8),
-                          width: index < _pin.length ? 20 : 16,
-                          height: index < _pin.length ? 20 : 16,
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 92,
+                          height: 92,
+                          padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: index < _pin.length
-                                ? npdBlack
-                                : Colors.transparent,
-                            border: Border.all(
-                              color: index < _pin.length
-                                  ? npdBlack
-                                  : npdBlack.withOpacity(0.3),
-                              width: 2,
-                            ),
+                            color: AppColors.tint(scheme.primary, 0.16),
+                            borderRadius: BorderRadius.circular(28),
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(18),
+                            child: _bundledLogo,
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    // Error / Loading
-                    SizedBox(
-                      height: 36,
-                      child: _isLoading
-                          ? SizedBox(
-                              width: 28,
-                              height: 28,
-                              child: CircularProgressIndicator(
-                                color: npdBlack,
-                                strokeWidth: 3,
+                        const SizedBox(height: 20),
+                        Text(
+                          'NPD HRMS',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.ibmPlexSansThai(
+                            fontSize: 22,
+                            fontWeight: FontWeight.w700,
+                            color: AppColors.text,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Text(
+                          'กรอกรหัส PIN 6 หลักเพื่อเข้าสู่ระบบ',
+                          textAlign: TextAlign.center,
+                          style: GoogleFonts.ibmPlexSansThai(
+                            fontSize: 14.5,
+                            color: AppColors.textMuted,
+                          ),
+                        ),
+                        const SizedBox(height: 28),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: List.generate(6, (index) {
+                            final bool filled = index < _pin.length;
+                            return AnimatedContainer(
+                              duration: const Duration(milliseconds: 160),
+                              curve: Curves.easeOut,
+                              margin: const EdgeInsets.symmetric(horizontal: 7),
+                              width: filled ? 16 : 14,
+                              height: filled ? 16 : 14,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle,
+                                color: filled ? ink : Colors.transparent,
+                                border: Border.all(
+                                  color: filled ? ink : const Color(0xFFCBD0D6),
+                                  width: 1.6,
+                                ),
                               ),
-                            )
-                          : Text(
-                              _errorMessage,
-                              style: GoogleFonts.ibmPlexSansThai(
-                                color: Colors.red.shade700,
-                                fontSize: 14,
+                            );
+                          }),
+                        ),
+                        const SizedBox(height: 18),
+                        _isLoading
+                            ? SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  color: ink,
+                                  strokeWidth: 2.5,
+                                ),
+                              )
+                            // ข้อความผิดพลาดอาจยาวหลายบรรทัด (เช่นสัญญาองค์กรหมดอายุ)
+                            // จึงกำหนดแค่ความสูงขั้นต่ำ ไม่ล็อกความสูงตายตัว
+                            : ConstrainedBox(
+                                constraints: const BoxConstraints(minHeight: 24),
+                                child: Text(
+                                  _errorMessage,
+                                  textAlign: TextAlign.center,
+                                  style: GoogleFonts.ibmPlexSansThai(
+                                    color: AppColors.danger,
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
                               ),
-                            ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
               ),
-              // ✅ ส่วนล่าง - Numpad ไม่มีพื้นหลังแยก ไล่ gradient ต่อเนื่อง
-              Padding(
-                padding: const EdgeInsets.only(top: 8, bottom: 8),
-                child: Numpad(onKeyPressed: _onKeyPressed),
-              ),
+              Numpad(onKeyPressed: _onKeyPressed),
+              const SizedBox(height: 4),
+              const SizedBox(height: 8),
             ],
           ),
         ),
@@ -797,69 +675,84 @@ class Numpad extends StatelessWidget {
   final Function(String) onKeyPressed;
   const Numpad({super.key, required this.onKeyPressed});
 
+  static const List<List<String>> _rows = [
+    ['1', '2', '3'],
+    ['4', '5', '6'],
+    ['7', '8', '9'],
+    ['forgot', '0', 'backspace'],
+  ];
+
   @override
   Widget build(BuildContext context) {
-    final buttons = [
-      '1', '2', '3',
-      '4', '5', '6',
-      '7', '8', '9',
-      'forgot', '0', 'backspace',
-    ];
-    // ✅ ใช้สีจาก Theme
-    final scheme = Theme.of(context).colorScheme;
-    final Color npdYellow = scheme.primary;
-    final Color npdBlack = scheme.onPrimary;
+    // มือถือจอเตี้ยย่อปุ่มลง ไม่งั้นส่วนโลโก้ด้านบนต้องเลื่อนดู
+    final double keySize = MediaQuery.sizeOf(context).height < 700 ? 60 : 70;
 
-    return GridView.builder(
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 3,
-        childAspectRatio: 1.6,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 40),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (final row in _rows)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  for (final value in row) _buildKey(context, value, keySize),
+                ],
+              ),
+            ),
+        ],
       ),
-      itemCount: buttons.length,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      padding: const EdgeInsets.symmetric(horizontal: 24),
-      itemBuilder: (context, index) {
-        final value = buttons[index];
-        if (value == 'forgot') {
-          return NumpadButton(
-            isSpecial: true,
-            child: Text(
-              'ลืมรหัส',
-              style: GoogleFonts.ibmPlexSansThai(
-                fontSize: 14,
-                color: Colors.grey.shade500,
-              ),
-            ),
-            onTap: () => ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(
-                  'กรุณาติดต่อฝ่ายบุคคลเพื่อรีเซ็ตรหัสผ่าน',
-                  style: GoogleFonts.ibmPlexSansThai(),
-                ),
-              ),
-            ),
-          );
-        }
-        if (value == 'backspace') {
-          return NumpadButton(
-            isSpecial: true,
-            onTap: () => onKeyPressed(value),
-            child: Icon(Icons.backspace_outlined, color: npdBlack.withOpacity(0.7), size: 26),
-          );
-        }
-        return NumpadButton(
-          onTap: () => onKeyPressed(value),
-          child: Text(
-            value,
-            style: GoogleFonts.ibmPlexSansThai(
-              fontSize: 28,
-              fontWeight: FontWeight.w600,
-              color: npdBlack,
+    );
+  }
+
+  Widget _buildKey(BuildContext context, String value, double size) {
+    if (value == 'forgot') {
+      return NumpadButton(
+        size: size,
+        isSpecial: true,
+        onTap: () => ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'กรุณาติดต่อฝ่ายบุคคลเพื่อรีเซ็ตรหัสผ่าน',
+              style: GoogleFonts.ibmPlexSansThai(),
             ),
           ),
-        );
-      },
+        ),
+        child: Text(
+          'ลืมรหัส',
+          style: GoogleFonts.ibmPlexSansThai(
+            fontSize: 14,
+            fontWeight: FontWeight.w500,
+            color: AppColors.textMuted,
+          ),
+        ),
+      );
+    }
+    if (value == 'backspace') {
+      return NumpadButton(
+        size: size,
+        isSpecial: true,
+        onTap: () => onKeyPressed(value),
+        child: const Icon(
+          Icons.backspace_outlined,
+          color: AppColors.text,
+          size: 24,
+        ),
+      );
+    }
+    return NumpadButton(
+      size: size,
+      onTap: () => onKeyPressed(value),
+      child: Text(
+        value,
+        style: GoogleFonts.ibmPlexSansThai(
+          fontSize: 26,
+          fontWeight: FontWeight.w600,
+          color: AppColors.text,
+        ),
+      ),
     );
   }
 }
@@ -868,24 +761,28 @@ class NumpadButton extends StatelessWidget {
   final Widget child;
   final VoidCallback onTap;
   final bool isSpecial;
-  const NumpadButton({super.key, required this.child, required this.onTap, this.isSpecial = false});
+  final double size;
+  const NumpadButton({
+    super.key,
+    required this.child,
+    required this.onTap,
+    this.isSpecial = false,
+    this.size = 70,
+  });
+
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.transparent,
+      // ปุ่มตัวเลขเป็นวงกลมพื้นเทาอ่อน ปุ่มพิเศษ (ลืมรหัส/ลบ) โปร่งใสให้ดูเป็นปุ่มรอง
+      color: isSpecial ? Colors.transparent : const Color(0xFFF2F4F7),
+      shape: const CircleBorder(),
+      clipBehavior: Clip.antiAlias,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(40),
-        splashColor: const Color(0xFF1A1A1A).withOpacity(0.08),
-        highlightColor: const Color(0xFF1A1A1A).withOpacity(0.05),
-        child: Center(
-          child: isSpecial
-              ? child
-              : SizedBox(
-                  width: 64,
-                  height: 64,
-                  child: Center(child: child),
-                ),
+        child: SizedBox(
+          width: size,
+          height: size,
+          child: Center(child: child),
         ),
       ),
     );
@@ -924,10 +821,17 @@ class _MainAppScreenState extends State<MainAppScreen> {
   final GlobalKey<ApproveAddTimeScreenState>
       _approveAddTimeScreenKey = // แก้ไข Type
       GlobalKey<ApproveAddTimeScreenState>(); // แก้ไข Type
+  final GlobalKey<ApprovalsHubScreenState> _approvalsHubKey =
+      GlobalKey<ApprovalsHubScreenState>();
 
   // ✅ เพิ่มตัวแปรและค่าคงที่สำหรับเวอร์ชัน
   String _currentVersion = ''; // ✅ กำหนดเวอร์ชันปัจจุบัน
   String _latestVersion = ''; // ✅ กำหนดเวอร์ชันล่าสุดจาก API/เซิร์ฟเวอร์
+
+  // ✅ รายการสิ่งที่ปรับปรุงของ "เวอร์ชันใหม่" — ต้องมาจากเซิร์ฟเวอร์เท่านั้น
+  // ถ้า hardcode ไว้ในแอป ข้อความจะช้าไป 1 เวอร์ชันเสมอ เพราะแอปที่ผู้ใช้ติดตั้งอยู่
+  // คือเวอร์ชันเก่า จึงมีแต่ข้อความของเวอร์ชันเก่าติดมาด้วย
+  List<String> _latestReleaseNotes = [];
 
   // ✅ แยก URL อัปเดตสำหรับแต่ละแพลตฟอร์ม
   String _appUpdateUrlAndroid = '';
@@ -1086,22 +990,32 @@ class _MainAppScreenState extends State<MainAppScreen> {
             context: context,
             barrierDismissible: false,
             builder: (context) => AlertDialog(
+              // รายการสิ่งที่ปรับปรุงอาจยาวหลายบรรทัด — ให้เลื่อนดูได้ ไม่ล้นจอเครื่องเล็ก
+              scrollable: true,
               title: Text('มีเวอร์ชันใหม่ v$_latestVersion',
                   style: GoogleFonts.ibmPlexSansThai(fontWeight: FontWeight.bold)),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('สิ่งที่ปรับปรุงในเวอร์ชัน 1.3.7',
-                      style: GoogleFonts.ibmPlexSansThai(
-                          fontWeight: FontWeight.bold, fontSize: 15)),
-                  const SizedBox(height: 10),
-                  Text('- เมนูอนุมัติเพิ่มเวลา เปิดดูไฟล์แนบได้แล้ว ทั้งในการ์ดและหน้ารายละเอียด',
-                      style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
-                  Text('- ประวัติการลาและประวัติการเพิ่มเวลา เพิ่มปุ่มแสดงทั้งหมด ดูย้อนหลังได้ทีละเดือน',
-                      style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
-                  Text('- สลิปเงินเดือน แก้ปุ่มแชร์และบันทึกไฟล์บน iPhone และ iPad ให้ใช้งานได้',
-                      style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
+                  // ข้อความมาจากเซิร์ฟเวอร์ จึงตรงกับเวอร์ชันใหม่เสมอ
+                  if (_latestReleaseNotes.isNotEmpty) ...[
+                    Text('สิ่งที่ปรับปรุงในเวอร์ชัน $_latestVersion',
+                        style: GoogleFonts.ibmPlexSansThai(
+                            fontWeight: FontWeight.bold, fontSize: 15)),
+                    const SizedBox(height: 10),
+                    ..._latestReleaseNotes.map(
+                      (note) => Padding(
+                        padding: const EdgeInsets.only(bottom: 2),
+                        child: Text('- $note',
+                            style:
+                                GoogleFonts.ibmPlexSansThai(fontSize: 14)),
+                      ),
+                    ),
+                  ] else
+                    // เซิร์ฟเวอร์ยังไม่ได้ส่งรายละเอียดมา — ห้ามแสดงรายการของเวอร์ชันเก่า
+                    Text('มีการปรับปรุงการใช้งานและแก้ไขข้อผิดพลาด',
+                        style: GoogleFonts.ibmPlexSansThai(fontSize: 14)),
                   const SizedBox(height: 12),
                   Text(
                     'กรุณาอัปเดตเพื่อใช้งานเวอร์ชันล่าสุด',
@@ -1171,6 +1085,24 @@ class _MainAppScreenState extends State<MainAppScreen> {
     debugPrint('--- Version Check Finished ---');
   }
 
+  /// รองรับทั้งกรณีเซิร์ฟเวอร์ส่งมาเป็น array และเป็นข้อความยาวคั่นด้วยขึ้นบรรทัดใหม่
+  /// ตัด "-" หรือ "•" นำหน้าออก เพราะหน้าจอใส่ "- " ให้เองอยู่แล้ว
+  List<String> _parseReleaseNotes(dynamic raw) {
+    List<String> lines;
+    if (raw is List) {
+      lines = raw.map((e) => e.toString()).toList();
+    } else if (raw is String) {
+      lines = raw.split(RegExp(r'[\r\n]+'));
+    } else {
+      return [];
+    }
+
+    return lines
+        .map((e) => e.trim().replaceFirst(RegExp(r'^[-•*]\s*'), '').trim())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
   Future<void> _fetchLatestVersion() async {
     try {
       final response = await http
@@ -1185,6 +1117,7 @@ class _MainAppScreenState extends State<MainAppScreen> {
             _appUpdateUrlAndroid =
                 (data['android_url'] as String?)?.trim() ?? '';
             _appUpdateUrlIos = (data['ios_url'] as String?)?.trim() ?? '';
+            _latestReleaseNotes = _parseReleaseNotes(data['release_notes']);
           });
         }
       } else {
@@ -1257,17 +1190,6 @@ class _MainAppScreenState extends State<MainAppScreen> {
         ),
       );
       newPages.add(PayslipScreen(user: widget.user)); // Pass user object here
-      if (_isApprover) {
-        newPages.add(
-          ApproveLeaveScreen(key: _approveLeaveScreenKey, user: widget.user),
-        );
-        newPages.add(
-          ApproveAddTimeScreen(
-            key: _approveAddTimeScreenKey,
-            user: widget.user,
-          ),
-        );
-      }
     } else {
       // Normal user flow
       newPages = [
@@ -1279,34 +1201,98 @@ class _MainAppScreenState extends State<MainAppScreen> {
         CheckinScreen(
           key: _checkinScreenKey, // ✅ เพิ่ม key
           userId: widget.user.id,
+          employeeCode: widget.user.employeeCode,
           isDemoUser: widget.isDemoUser,
           onCheckinComplete: _handleCheckinComplete,
         ), // ส่ง isDemoUser
         LeaveScreen(key: _leaveScreenKey, user: widget.user), // ✅ กำหนด key
         AddTimeScreen(key: _addTimeScreenKey, user: widget.user),
       ];
-      if (_isApprover) {
-        newPages.add(
-          ApproveLeaveScreen(key: _approveLeaveScreenKey, user: widget.user),
-        ); // กำหนด key
-        newPages.add(
-          ApproveAddTimeScreen(
-            // แก้ไข: เรียกใช้ ApproveAddTimeScreen
+    }
+
+    // ผู้อนุมัติได้ปุ่ม "อนุมัติ" ปุ่มเดียว (ลา/เพิ่มเวลาแยกเป็นแท็บข้างใน)
+    // ต้องเป็นหน้าสุดท้ายเสมอ ให้ตรงกับลำดับปุ่มใน AppBottomNavBar
+    if (_isApprover) {
+      newPages.add(
+        ApprovalsHubScreen(
+          key: _approvalsHubKey,
+          onTabTapped: _refreshApprovalTab,
+          leaveScreen: ApproveLeaveScreen(
+            key: _approveLeaveScreenKey,
+            user: widget.user,
+            embedded: true,
+          ),
+          addTimeScreen: ApproveAddTimeScreen(
             key: _approveAddTimeScreenKey,
             user: widget.user,
+            embedded: true,
           ),
-        ); // กำหนด key
-      }
+        ),
+      );
     }
     _pages = newPages;
   }
 
+  /// รีเฟรชแท็บในหน้าอนุมัติ (0 = การลา, 1 = เพิ่มเวลา)
+  void _refreshApprovalTab(int tab) {
+    if (tab == 0) {
+      _approveLeaveScreenKey.currentState?.refreshData();
+    } else {
+      _approveAddTimeScreenKey.currentState?.refreshData();
+    }
+  }
+
+  /// เปิดหน้าอนุมัติตรงแท็บที่ต้องการ — ใช้จากการ์ดบนหน้าแรก
+  void _openApprovals(int tab) {
+    final index = _pages.indexWhere((page) => page is ApprovalsHubScreen);
+    if (index == -1) return;
+    _approvalsHubKey.currentState?.showTab(tab);
+    _onItemTapped(index);
+  }
+
   // ✅ Callback เมื่อลงเวลาเสร็จ - เปลี่ยนไปหน้าหลักและแสดง SnackBar
+  /// เช็คว่าวันนี้เข้างานสายไหม แล้วแจ้งเตือน (ชุดเดียวกับแจ้งเตือนเข้า-ออกงาน)
+  ///
+  /// อิงสูตรใน Odoo ล้วน ๆ ไม่ได้คำนวณในแอป — เปลี่ยนสูตรเมื่อไหร่ก็ตามทันที
+  /// เตือนวันละครั้งพอ (จำไว้ใน SharedPreferences) กันเตือนซ้ำตอนสแกนออก
+  /// หรือตอนสแกนเข้ารอบสอง
+  Future<void> _notifyIfLateToday() async {
+    try {
+      final code = widget.user.employeeCode ?? '';
+      if (code.isEmpty) return;
+
+      final now = DateTime.now();
+      final todayKey =
+          '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+
+      final prefs = await SharedPreferences.getInstance();
+      if (prefs.getString('late_notified_date') == todayKey) return;
+
+      final late = await OdooRpcService().getLateMinutes(code, now.month, now.year);
+      final info = late[todayKey];
+      if (info == null || info.minutes <= 0) return;
+
+      await NotificationService().showLateCheckinNotification(
+        minutes: info.minutes,
+        checkinTime: info.checkin,
+      );
+      await prefs.setString('late_notified_date', todayKey);
+    } catch (e) {
+      // แจ้งเตือนพลาดไม่ควรทำให้การลงเวลาพัง
+      debugPrint('⚠️ _notifyIfLateToday error: $e');
+    }
+  }
+
   void _handleCheckinComplete(String message, bool isSuccess) {
     // เปลี่ยนไปหน้าหลัก (index 0)
     setState(() {
       _selectedIndex = 0;
     });
+
+    // ✅ ลงเวลาสำเร็จ -> เช็คว่าสายไหม ถ้าสายก็แจ้งเตือน (ไม่ block UI)
+    if (isSuccess) {
+      _notifyIfLateToday();
+    }
     
     // รีเฟรชข้อมูลหน้าหลัก
     if (_homePageKey.currentState != null) {
@@ -1374,16 +1360,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
       if (_addTimeScreenKey.currentState != null) {
         _addTimeScreenKey.currentState!.refreshData();
       }
-    } else if (index < _pages.length) {
-      // Check to prevent index out of bounds if approver pages not added
-      final currentPage = _pages[index];
-      if (currentPage is ApproveLeaveScreen &&
-          _approveLeaveScreenKey.currentState != null) {
-        _approveLeaveScreenKey.currentState!.refreshData();
-      } else if (currentPage is ApproveAddTimeScreen &&
-          _approveAddTimeScreenKey.currentState != null) {
-        _approveAddTimeScreenKey.currentState!.refreshData();
-      }
+    } else if (_pages[index] is ApprovalsHubScreen) {
+      _refreshApprovalTab(_approvalsHubKey.currentState?.currentTab ?? 0);
     }
   }
 
@@ -1817,6 +1795,8 @@ class _MainAppScreenState extends State<MainAppScreen> {
 
     if (confirmLogout ?? false) {
       await _safeClearPrefs();
+      // เครื่องเดียวใช้หลายคนได้ — ห้ามให้รูปคนเก่าค้างให้คนถัดไปเห็น
+      ProfilePhotoService.instance.clear();
 
       if (mounted) {
         Navigator.of(context).pushAndRemoveUntil(
@@ -1825,42 +1805,6 @@ class _MainAppScreenState extends State<MainAppScreen> {
         );
       }
     }
-  }
-
-  String _getPageTitle(int index) {
-    if (_pages.isEmpty) {
-      return 'กำลังโหลด...';
-    }
-    if (index >= 0 && index < _pages.length) {
-      // Consultant specific titles
-      if (_isConsultant) {
-        if (_pages[index] is HomePage) {
-          return 'หน้าแรก (${widget.user.firstname} ${widget.user.lastname})';
-        } else if (_pages[index] is PayslipScreen) {
-          return 'สลิปเงินเดือน';
-        } else if (_pages[index] is ApproveLeaveScreen) {
-          return 'อนุมัติการลา';
-        } else if (_pages[index] is ApproveAddTimeScreen) {
-          return 'อนุมัติเพิ่มเวลา';
-        }
-      } else {
-        // Normal user titles
-        if (_pages[index] is HomePage) {
-          return 'หน้าแรก (${widget.user.firstname} ${widget.user.lastname})';
-        } else if (_pages[index] is CheckinScreen) {
-          return 'ลงเวลา';
-        } else if (_pages[index] is LeaveScreen) {
-          return 'การลา';
-        } else if (_pages[index] is AddTimeScreen) {
-          return 'เพิ่มเวลา';
-        } else if (_pages[index] is ApproveLeaveScreen) {
-          return 'อนุมัติการลา';
-        } else if (_pages[index] is ApproveAddTimeScreen) {
-          return 'อนุมัติเพิ่มเวลา';
-        }
-      }
-    }
-    return 'NPD HRMS';
   }
 
   @override
@@ -1875,35 +1819,13 @@ class _MainAppScreenState extends State<MainAppScreen> {
       );
     }
 
+    // ทุกหน้ามีแถบหัวของตัวเองแล้ว (หน้าแรกมีส่วนหัวใหม่ หน้าอื่นมีแถบหัวในตัว)
+    // จึงไม่มีแถบหัวรวมอีก — ของเดิมซ้อนกันสองชั้นทั้งชื่อหน้าและปุ่ม
     return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          _getPageTitle(_selectedIndex),
-          style: GoogleFonts.ibmPlexSansThai(
-            fontSize: 15,
-            fontWeight: FontWeight.w600,
-          ),
-          overflow: TextOverflow.ellipsis,
-          maxLines: 1,
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.palette_outlined),
-            onPressed: _showThemePicker,
-            tooltip: 'เปลี่ยนสีธีม',
-          ),
-          IconButton(
-            icon: const Icon(Icons.logout_outlined),
-            onPressed: _logout,
-            tooltip: 'ออกจากระบบ',
-          ),
-        ],
-      ),
       body: IndexedStack(index: _selectedIndex, children: _pages),
       bottomNavigationBar: AppBottomNavBar(
         currentIndex: _selectedIndex,
         onItemTapped: _onItemTapped,
-        selectedItemColor: Theme.of(context).colorScheme.primary,
         isApprover: _isApprover,
         isConsultant: _isConsultant, // Pass the new consultant status
       ),
@@ -1924,9 +1846,39 @@ class HomePage extends StatefulWidget {
   State<HomePage> createState() => _HomePageState();
 }
 
-class _HomePageState extends State<HomePage> {
+class _HomePageState extends State<HomePage> with WidgetsBindingObserver {
   bool _isLoading = true;
   Map<String, dynamic>? _menuData;
+
+  /// ข้อมูลสายรายวัน — คำนวณจากสูตรใน Odoo ไม่ได้คิดในแอป
+  Map<String, LateInfo> _lateMinutes = {};
+
+  /// ข้อความกะของวันนี้ที่แสดงบนการ์ด "วันนี้" (null = ยังไม่รู้/โหลดไม่ได้)
+  String? _todayShiftText;
+
+  /// ดึงนาทีสายของ "เดือนที่ปรากฏในประวัติ" (ประวัติ 3 วันอาจคาบ 2 เดือน)
+  /// ล้มเหลวก็เงียบ ๆ แค่ไม่แสดงข้อความสาย ไม่ทำให้หน้าหลักพัง
+  Future<void> _loadLateMinutesForHistory(dynamic history) async {
+    if (history is! List || history.isEmpty) return;
+    final code = widget.user.employeeCode ?? '';
+    if (code.isEmpty) return;
+
+    final Set<String> months = {};
+    for (final item in history) {
+      final date = (item is Map ? item['work_date'] : null)?.toString() ?? '';
+      if (date.length >= 7) months.add(date.substring(0, 7)); // YYYY-MM
+    }
+
+    final Map<String, LateInfo> merged = {};
+    final service = OdooRpcService();
+    for (final ym in months) {
+      final year = int.tryParse(ym.substring(0, 4));
+      final month = int.tryParse(ym.substring(5, 7));
+      if (year == null || month == null) continue;
+      merged.addAll(await service.getLateMinutes(code, month, year));
+    }
+    if (mounted) setState(() => _lateMinutes = merged);
+  }
   String _errorMessage = '';
   late Timer _historyTimer; // Timer for real-time refresh of history
 
@@ -1943,6 +1895,28 @@ class _HomePageState extends State<HomePage> {
     // initializeDateFormatting('th', null); // ควรถูกเรียกใน main() แล้ว
     _startHistoryTimer(); // เริ่มจับเวลาสำหรับ history
     _loadWarningCount();
+    _loadTodayShift();
+    // รูปโปรไฟล์ของคนที่ล็อกอินอยู่ — ดึงจากบัตรพนักงานใน Odoo
+    WidgetsBinding.instance.addObserver(this);
+    ProfilePhotoService.instance.bind(widget.user.employeeCode);
+    ProfilePhotoService.instance.load();
+    _resumeLostPhoto();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // กลับเข้าแอปหลังเปิดกล้อง/คลังภาพ — ถ้าตอนนั้นแอปถูกระบบปิดไป
+    // ผลการเลือกรูปจะค้างอยู่ฝั่ง Android ต้องมาดึงต่อเอง
+    if (state == AppLifecycleState.resumed) _resumeLostPhoto();
+  }
+
+  /// อัปโหลดรูปที่เลือกค้างไว้ (ถ้ามี) แล้วแจ้งผลให้ผู้ใช้รู้
+  Future<void> _resumeLostPhoto() async {
+    final message = await ProfilePhotoService.instance.retrieveLostPhoto();
+    if (message == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message, style: GoogleFonts.ibmPlexSansThai())),
+    );
   }
 
   Future<void> _loadWarningCount() async {
@@ -1953,9 +1927,19 @@ class _HomePageState extends State<HomePage> {
           await OdooRpcService().getEmployeeWarningCount(code);
       if (!mounted) return;
 
+      // ⚠️ ติดต่อเซิร์ฟเวอร์ไม่ได้ → ไม่รู้ยอดจริง ห้ามทำอะไรทั้งนั้น
+      //    ถ้าปล่อยให้ไหลต่อ ระบบจะเข้าใจว่า "ไม่มีใบเตือน" แล้วไป
+      //    ยกเลิกแจ้งเตือน + ลบสถานะอ่านแล้วทิ้ง (ยิ่งเช็คทุก 30 วิ ยิ่งพัง)
+      if (count == null) {
+        debugPrint('⚠️ ดึงจำนวนใบเตือนไม่ได้ (เน็ต/เซิร์ฟเวอร์) — คงสถานะเดิมไว้');
+        return;
+      }
+
       final prefs = await SharedPreferences.getInstance();
       final prefKey = 'warning_read_count_$code';
+      final notifiedKey = 'warning_notified_count_$code';
       final readCount = prefs.getInt(prefKey) ?? 0;
+      final notifiedCount = prefs.getInt(notifiedKey) ?? 0;
 
       // ✅ Badge แสดงเฉพาะใบเตือนที่ยังไม่อ่าน (unread = total - read)
       final unread = count > readCount ? (count - readCount) : 0;
@@ -1966,16 +1950,23 @@ class _HomePageState extends State<HomePage> {
       });
 
       if (unread > 0) {
-        // มีใบเตือนใหม่ที่ยังไม่อ่าน → แจ้งเตือน
-        await NotificationService().showWarningNotification(count: unread);
+        // ✅ เด้งเฉพาะตอนที่ "มีใบเพิ่มขึ้นจริง" เท่านั้น
+        //    เพราะตัวนี้ถูกเรียกทุก 30 วินาที ถ้าเด้งทุกรอบจะสั่นไม่หยุด
+        //    (ใบที่ยังไม่อ่านยังคงค้างอยู่บน badge เหมือนเดิม)
+        if (count > notifiedCount) {
+          await NotificationService().showWarningNotification(count: unread);
+          await prefs.setInt(notifiedKey, count);
+        }
       } else {
         // ไม่มีใบเตือนที่ยังไม่อ่าน → ยกเลิกแจ้งเตือน
         await NotificationService().cancelWarningNotification();
+        await prefs.setInt(notifiedKey, count);
       }
 
       if (count == 0) {
         // ไม่มีใบเตือนเลย → reset counter
         await prefs.remove(prefKey);
+        await prefs.remove(notifiedKey);
       }
     } catch (e) {
       debugPrint('Error loading warning count: $e');
@@ -1990,12 +1981,15 @@ class _HomePageState extends State<HomePage> {
       if (code.isEmpty) return;
 
       // ดึงจำนวนใบเตือนจริงจากเซิร์ฟเวอร์
+      // ถ้าเน็ตหลุด ใช้ยอดล่าสุดที่รู้แทน — ผู้ใช้กดอ่านจริง badge ต้องหาย
       final totalCount =
-          await OdooRpcService().getEmployeeWarningCount(code);
+          await OdooRpcService().getEmployeeWarningCount(code) ?? _warningCount;
 
       // บันทึกว่าอ่านใบเตือนถึงจำนวนนี้แล้ว
       final prefs = await SharedPreferences.getInstance();
       await prefs.setInt('warning_read_count_$code', totalCount);
+      // อ่านแล้ว = ถือว่าแจ้งเตือนถึงใบนี้แล้ว ใบถัดไปถึงจะเด้งใหม่
+      await prefs.setInt('warning_notified_count_$code', totalCount);
 
       // ล้าง badge (unread = 0) แต่ total ยังอยู่
       if (mounted) {
@@ -2076,11 +2070,27 @@ class _HomePageState extends State<HomePage> {
     await NotificationService().cancelApproverAddTimeNotification();
   }
 
-  /// 🔔 เช็คสถานะคำขอของผู้ใช้เอง (การลา + เพิ่มเวลา)
-  /// ถ้า state เปลี่ยนจาก 'รออนุมัติ' → 'อนุมัติ' / 'ไม่อนุมัติ' → แจ้งเตือน
+  /// 🔔 เช็คสถานะคำขอของผู้ใช้เอง (การลา + เพิ่มเวลา + ค่ารักษาพยาบาล)
+  /// ถ้า state เปลี่ยนจาก 'รออนุมัติ' → 'อนุมัติ' / 'ไม่อนุมัติ' / 'ยกเลิก' → แจ้งเตือน
+  ///
+  /// ค่ารักษาพยาบาลอนุมัติที่ Odoo แล้ว Odoo จะ push สถานะกลับมาที่ PHP
+  /// รอบ poll นี้จึงเห็นการเปลี่ยนแปลงและแจ้งเตือนได้เหมือนคำขออื่น
   Future<void> _checkRequesterStatusNotifications() async {
     final userId = widget.user.id;
     final prefs = await SharedPreferences.getInstance();
+
+    // รอบแรกของผู้ใช้คนนี้ ให้จำสถานะไว้เฉย ๆ ไม่ต้องแจ้งเตือน
+    // ไม่งั้นพอลงแอปใหม่จะเด้งย้อนหลังรวดเดียวหลายใบ
+    //
+    // หลังจากรอบแรกแล้ว ใบที่ไม่เคยเห็นมาก่อนและสถานะไม่ใช่ "รออนุมัติ"
+    // ถือว่าเพิ่งถูกตัดสินตอนแอปปิดอยู่ → ต้องแจ้งเตือน
+    // (เดิมเช็คแค่ prevState == 'รออนุมัติ' ใบที่ถูกอนุมัติตอนแอปปิดจึงเงียบหายไป)
+    final initKey = 'req_notify_init_$userId';
+    final bool isFirstRun = !(prefs.getBool(initKey) ?? false);
+    // ปักธง "จำสถานะครบแล้ว" ต่อเมื่อดึงข้อมูลสำเร็จทั้งสองชุด
+    // ถ้าเน็ตหลุดกลางทางแล้วปักธงไป รอบหน้าจะเด้งย้อนหลังทั้งกอง
+    bool leaveOk = false;
+    bool addTimeOk = false;
 
     // ---- ดึงคำขอลาของผู้ใช้ ----
     try {
@@ -2089,6 +2099,7 @@ class _HomePageState extends State<HomePage> {
         const Duration(seconds: 15),
       );
       if (leaveResp.statusCode == 200) {
+        leaveOk = true;
         final body = json.decode(leaveResp.body);
         final List<dynamic> logs = body is List
             ? body
@@ -2102,8 +2113,11 @@ class _HomePageState extends State<HomePage> {
           final key = 'req_leave_state_${userId}_$id';
           final prevState = prefs.getString(key);
 
-          // ถ้าเคยเห็นเป็น "รออนุมัติ" แต่ตอนนี้เปลี่ยนไปแล้ว → แจ้งเตือน
-          if (prevState == 'รออนุมัติ' && state != 'รออนุมัติ') {
+          // แจ้งเตือนเมื่อสถานะเปลี่ยนจากที่เคยเห็น ไม่ใช่เฉพาะขาที่ออกจาก "รออนุมัติ"
+          // เพราะใบที่อนุมัติแล้วยังถูกยกเลิกหรือถอยกลับได้อีก
+          final bool stateChanged = prevState != null && prevState != state;
+          final bool firstSeenDecided = prevState == null && state != 'รออนุมัติ';
+          if (!isFirstRun && (stateChanged || firstSeenDecided)) {
             final approverName = [
               (l['approver_firstname'] ?? '').toString(),
               (l['approver_lastname'] ?? '').toString(),
@@ -2137,6 +2151,7 @@ class _HomePageState extends State<HomePage> {
           'https://npdhrms.com/api/manual_time_logs_test.php?user_id=$userId'))
           .timeout(const Duration(seconds: 15));
       if (addResp.statusCode == 200) {
+        addTimeOk = true;
         final body = json.decode(addResp.body);
         final List<dynamic> logs = body is List
             ? body
@@ -2150,21 +2165,60 @@ class _HomePageState extends State<HomePage> {
           final key = 'req_addtime_state_${userId}_$id';
           final prevState = prefs.getString(key);
 
-          if (prevState == 'รออนุมัติ' && state != 'รออนุมัติ') {
+          final bool stateChanged = prevState != null && prevState != state;
+          final bool firstSeenDecided = prevState == null && state != 'รออนุมัติ';
+          if (!isFirstRun && (stateChanged || firstSeenDecided)) {
+            // ตารางนี้เก็บทั้งคำขอเพิ่มเวลาและค่ารักษาพยาบาลปนกัน
+            // ต้องแยกประเภทก่อน ไม่งั้นค่ารักษาพยาบาลจะเด้งว่า "คำขอเพิ่มเวลา"
+            final reasonType = (l['reason_type'] ?? '').toString();
+            final isMedical = reasonType == kMedicalReasonType;
+
             final approverName = [
               (l['approver_firstname'] ?? '').toString(),
               (l['approver_lastname'] ?? '').toString(),
             ].where((s) => s.isNotEmpty && s != 'NULL').join(' ');
             final reason = (l['reason'] ?? '').toString();
+
             final bodyBuf = StringBuffer();
+            if (isMedical) {
+              // ค่ารักษาพยาบาลอนุมัติจากฝั่ง Odoo — ยอดเงินคือสิ่งที่พนักงานอยากรู้ที่สุด
+              final amount = double.tryParse((l['amount'] ?? '').toString());
+              if (amount != null && amount > 0) {
+                bodyBuf.writeln(
+                    'จำนวนเงิน: ${NumberFormat('#,##0.00').format(amount)} บาท');
+              }
+            } else if (reasonType.isNotEmpty && reasonType != 'NULL') {
+              bodyBuf.writeln('ประเภท: $reasonType');
+            }
             if (approverName.isNotEmpty) bodyBuf.writeln('โดย: $approverName');
             if (reason.isNotEmpty && reason != 'NULL') {
               bodyBuf.writeln('หมายเหตุ: $reason');
             }
+
+            final what = isMedical ? 'ค่ารักษาพยาบาล' : 'คำขอเพิ่มเวลา';
+            final String title;
+            switch (state) {
+              case 'อนุมัติ':
+                title = '${what}ได้รับการอนุมัติแล้ว';
+                break;
+              case 'ไม่อนุมัติ':
+                title = '${what}ไม่ได้รับการอนุมัติ';
+                break;
+              case 'ยกเลิก':
+                title = '${what}ถูกยกเลิก';
+                break;
+              case 'รออนุมัติ':
+                // เกิดจากผู้อนุมัติกด "ถอยกลับการอนุมัติ" ใน Odoo
+                title = '${what}ถูกส่งกลับมารออนุมัติใหม่';
+                break;
+              default:
+                title = '${what}: $state';
+            }
+
             await NotificationService().showInstantNotification(
-              title: 'คำขอเพิ่มเวลา${state}แล้ว',
+              title: title,
               body: bodyBuf.toString().trim().isEmpty
-                  ? 'อัปเดตสถานะคำขอเพิ่มเวลา'
+                  ? 'อัปเดตสถานะ${what}'
                   : bodyBuf.toString().trim(),
             );
           }
@@ -2174,18 +2228,27 @@ class _HomePageState extends State<HomePage> {
     } catch (e) {
       debugPrint('⚠️ Check addtime requests error: $e');
     }
+
+    if (isFirstRun && leaveOk && addTimeOk) {
+      await prefs.setBool(initKey, true);
+    }
   }
 
   void _startHistoryTimer() {
     _historyTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      // ✅ ควรเรียกเฉพาะเมื่อหน้า HomePage ถูกแสดงอยู่
-      if (mounted) {
-        final mainAppScreenState =
-            context.findAncestorStateOfType<_MainAppScreenState>();
-        if (mainAppScreenState != null &&
-            mainAppScreenState._selectedIndex == 0) {
-          _fetchMenuData(); // เรียก fetch data อีกครั้ง
-        }
+      if (!mounted) return;
+
+      // 🔔 เช็คใบเตือนใหม่ทุกรอบ ไม่ว่าจะอยู่แท็บไหน
+      //    ก่อนหน้านี้เช็คแค่ตอนเปิดแอปกับตอนสลับกลับมาหน้าแรก
+      //    ใบเตือนที่ออกตอนแอปเปิดค้างอยู่จึงเงียบไปเลย
+      _loadWarningCount();
+
+      // ✅ ข้อมูลหน้าแรก โหลดเฉพาะเมื่อหน้า HomePage ถูกแสดงอยู่
+      final mainAppScreenState =
+          context.findAncestorStateOfType<_MainAppScreenState>();
+      if (mainAppScreenState != null &&
+          mainAppScreenState._selectedIndex == 0) {
+        _fetchMenuData(); // เรียก fetch data อีกครั้ง
       }
     });
   }
@@ -2210,6 +2273,7 @@ class _HomePageState extends State<HomePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _historyTimer.cancel();
     super.dispose();
   }
@@ -2252,6 +2316,8 @@ class _HomePageState extends State<HomePage> {
             _errorMessage = ''; // เคลียร์ error message เมื่อสำเร็จ
           });
         }
+        // ✅ ดึงนาทีสายของวันที่อยู่ในประวัติ ตามสูตรที่ตั้งใน Odoo
+        _loadLateMinutesForHistory(data['checkin_history']);
         // Update approver status in MainAppScreen state
         final mainAppScreenState =
             context.findAncestorStateOfType<_MainAppScreenState>();
@@ -2372,258 +2438,755 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  /// อ่านกะของวันนี้ไว้แสดงบนการ์ด "วันนี้" — โหลดครั้งเดียวตอนเปิดหน้า
+  /// ตารางงานไม่ได้เปลี่ยนบ่อย ไม่ต้องดึงซ้ำทุก 30 วินาทีเหมือนประวัติ
+  /// โหลดไม่ได้ก็แค่ไม่แสดงบรรทัดกะ ไม่กระทบส่วนอื่นของหน้า
+  Future<void> _loadTodayShift() async {
+    if (widget.user.position == 'ที่ปรึกษา') return;
+    try {
+      final schedule = await OdooRpcService()
+          .getWorkSchedule(widget.user.employeeCode ?? '');
+      if (!mounted || schedule == null || schedule.isEmpty) return;
+
+      String text;
+      if (schedule['category'] == 'no_checkin') {
+        text = 'ไม่ต้องลงเวลา';
+      } else {
+        // getWorkSchedule ส่งเฉพาะวันที่ต้องทำงาน โดยใช้ชื่อวันภาษาอังกฤษ
+        const dayNames = [
+          'monday',
+          'tuesday',
+          'wednesday',
+          'thursday',
+          'friday',
+          'saturday',
+          'sunday',
+        ];
+        final String todayName = dayNames[DateTime.now().weekday - 1];
+        Map? today;
+        final days = schedule['days'];
+        if (days is List) {
+          for (final day in days) {
+            if (day is Map && day['day'] == todayName) {
+              today = day;
+              break;
+            }
+          }
+        }
+        text = today == null
+            ? 'วันหยุด'
+            : 'กะวันนี้ ${_shiftTime(today['start_hour'])}'
+                ' – ${_shiftTime(today['end_hour'])} น.';
+      }
+      setState(() => _todayShiftText = text);
+    } catch (e) {
+      debugPrint('โหลดกะของวันนี้ไม่สำเร็จ: $e');
+    }
+  }
+
+  /// ชั่วโมงทศนิยมจาก Odoo (8.5) → "08:30"
+  static String _shiftTime(dynamic hours) {
+    final double value = hours is num ? hours.toDouble() : 0;
+    final int h = value.floor();
+    final int m = ((value - h) * 60).round();
+    return '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}';
+  }
+
+  /// เวลาเข้า-ออกของวันนี้ จากประวัติที่หน้าแรกโหลดมาอยู่แล้ว (ไม่ยิงเพิ่ม)
+  _TodayStatus _todayStatus() {
+    final List history = _menuData?['checkin_history'] ?? const [];
+    final String today = _dateKey(DateTime.now());
+    final entries = history
+        .whereType<Map>()
+        .where((e) => e['work_date'] == today)
+        .toList()
+      ..sort((a, b) => '${a['full_datetime'] ?? ''}'
+          .compareTo('${b['full_datetime'] ?? ''}'));
+
+    String? firstIn;
+    String? lastOut;
+    String? lastType;
+    for (final entry in entries) {
+      final type = entry['check_type'];
+      if (type == 'in') {
+        firstIn ??= entry['work_time']?.toString();
+        // เข้างานรอบใหม่หลังออกไปแล้ว (เช่นพักกลางวัน) — ยังไม่ถือว่าออกงาน
+        lastOut = null;
+        lastType = 'in';
+      } else if (type == 'out') {
+        lastOut = entry['work_time']?.toString();
+        lastType = 'out';
+      }
+    }
+    return _TodayStatus(firstIn: firstIn, lastOut: lastOut, lastType: lastType);
+  }
+
+  /// สลับไปแท็บของแถบเมนูล่าง — ถ้าหน้าแรกถูกเปิดเดี่ยว ๆ (ไม่มีแถบเมนู) ค่อยเปิดเป็นหน้าใหม่
+  void _openTab(int index, WidgetBuilder fallback) {
+    final shell = context.findAncestorStateOfType<_MainAppScreenState>();
+    if (shell != null) {
+      shell._onItemTapped(index);
+    } else {
+      Navigator.push(context, MaterialPageRoute(builder: fallback));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Determine if the user is a consultant
     final bool isConsultant = widget.user.position == 'ที่ปรึกษา';
+    final scheme = Theme.of(context).colorScheme;
 
-    // Show loading indicator if initial data is still being fetched and not yet available
-    return _isLoading && _menuData == null
-        ? Center(
-            child: CircularProgressIndicator(
-              color: Theme.of(context).colorScheme.primary,
-            ),
-          )
-        : _errorMessage.isNotEmpty // Show error message if fetch failed
-            ? Center(
+    final List<Widget> sections;
+    if (_isLoading && _menuData == null) {
+      sections = [
+        const SizedBox(height: 40),
+        Center(child: CircularProgressIndicator(color: scheme.primary)),
+      ];
+    } else if (_errorMessage.isNotEmpty) {
+      sections = [_buildErrorState()];
+    } else {
+      sections = [
+        const AppSectionHeader('เมนูหลัก'),
+        if (isConsultant)
+          _buildConsultantMenuGrid(context)
+        else
+          _buildMenuGrid(context),
+        if (_menuData?['is_approver'] ?? false) ...[
+          const SizedBox(height: 20),
+          _buildApproverSection(),
+        ],
+        if (!isConsultant) ...[
+          const SizedBox(height: 20),
+          AppSectionHeader(
+            'ลงเวลาล่าสุด',
+            actionLabel: 'ดูทั้งหมด',
+            onAction: _showFullCheckinHistory,
+          ),
+          _buildHistoryList(),
+        ],
+        const SizedBox(height: 24),
+      ];
+    }
+
+    // แถบหัวสีธีมโค้งมน + การ์ด "วันนี้" ลอยทับ (แนวเดียวกับแอปฝั่ง Odoo 18)
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: AppColors.overlayStyleFor(scheme.primary),
+      child: RefreshIndicator(
+        // Allow manual pull-to-refresh
+        onRefresh: _fetchMenuData,
+        color: AppColors.ink(scheme.primary),
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Column(
+            children: [
+              _buildHeader(),
+              // เลื่อนขึ้นทับแถบหัวด้วย Transform ไม่ใช่ Stack — กดการ์ดได้ทั้งใบ
+              Transform.translate(
+                offset: const Offset(0, -54),
                 child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
-                      _errorMessage,
-                      style: GoogleFonts.ibmPlexSansThai(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      // ที่ปรึกษาไม่ต้องลงเวลา — เห็นแค่นาฬิกา ไม่มีปุ่มลงเวลา
+                      child: isConsultant
+                          ? _heroCard(child: const RealTimeClock())
+                          : _buildTodayCard(),
                     ),
-                    const SizedBox(height: 8),
-                    ElevatedButton.icon(
-                      onPressed: _fetchMenuData, // Retry button
-                      icon: const Icon(Icons.refresh),
-                      label: Text('ลองอีกครั้ง', style: GoogleFonts.ibmPlexSansThai()),
+                    const SizedBox(height: 20),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: sections,
+                      ),
                     ),
                   ],
                 ),
-              )
-            : RefreshIndicator(
-                // Allow manual pull-to-refresh
-                onRefresh: _fetchMenuData,
-                color: Theme.of(context).colorScheme.primary,
-                child: Container(
-                  color: Colors.white,
-                  child: ListView(
-                    padding: const EdgeInsets.all(16.0),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// กล่องลอยทับแถบหัว — เงาเข้มกว่าการ์ดอื่นเพื่อให้ดูลอยจริง
+  Widget _heroCard({required Widget child}) {
+    return Material(
+      color: AppColors.surface,
+      elevation: 6,
+      shadowColor: Colors.black.withValues(alpha: 0.18),
+      borderRadius: BorderRadius.circular(22),
+      child: Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+            color: AppColors.frame(Theme.of(context).colorScheme.primary),
+          ),
+        ),
+        child: child,
+      ),
+    );
+  }
+
+  /// ป้ายสถานะการลงเวลาของวันนี้ บนแถบหัว
+  Widget _headerStatusChip(Color onAccent) {
+    final today = _todayStatus();
+    final IconData icon;
+    final String label;
+    if (today.lastType == 'in') {
+      icon = Icons.check_circle;
+      label = 'กำลังทำงาน';
+    } else if (today.lastType == 'out') {
+      icon = Icons.task_alt_rounded;
+      label = 'ออกงานแล้ว';
+    } else if (_todayShiftText == 'วันหยุด' ||
+        _todayShiftText == 'ไม่ต้องลงเวลา') {
+      icon = Icons.beach_access_rounded;
+      label = _todayShiftText!;
+    } else {
+      icon = Icons.schedule_rounded;
+      label = 'ยังไม่ลงเวลา';
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: onAccent.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: onAccent, size: 15),
+          const SizedBox(width: 5),
+          Text(
+            label,
+            style: GoogleFonts.ibmPlexSansThai(
+              color: onAccent,
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.cloud_off_rounded,
+              size: 56, color: AppColors.textFaint),
+          const SizedBox(height: 12),
+          Text(
+            _errorMessage,
+            textAlign: TextAlign.center,
+            style: GoogleFonts.ibmPlexSansThai(
+              fontSize: 15,
+              color: AppColors.text,
+            ),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton.icon(
+            onPressed: _fetchMenuData, // Retry button
+            icon: const Icon(Icons.refresh_rounded),
+            label: const Text('ลองอีกครั้ง'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// การ์ด "วันนี้" — นาฬิกา กะ เวลาเข้า-ออก และปุ่มลงเวลาใหญ่
+  /// ปุ่มพาไปหน้าลงเวลาเดิม (ตรวจพิกัด/บันทึกที่นั่น) การ์ดนี้แค่แสดงผล
+  Widget _buildTodayCard() {
+    final today = _todayStatus();
+    final int lateMinutes =
+        _lateMinutes[_dateKey(DateTime.now())]?.minutes ?? 0;
+
+    return _heroCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const RealTimeClock(),
+          if (_todayShiftText != null) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                const Icon(Icons.schedule_rounded,
+                    size: 16, color: AppColors.textMuted),
+                const SizedBox(width: 6),
+                Text(
+                  _todayShiftText!,
+                  style: GoogleFonts.ibmPlexSansThai(
+                    fontSize: 13.5,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 16),
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(
+                  child: _TimeStat(
+                    icon: Icons.login_rounded,
+                    label: 'เข้างาน',
+                    time: today.firstIn,
+                    color: AppColors.success,
+                    note: today.firstIn != null && lateMinutes > 0
+                        ? _lateLabel(lateMinutes)
+                        : null,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: _TimeStat(
+                    icon: Icons.logout_rounded,
+                    label: 'ออกงาน',
+                    time: today.lastOut,
+                    color: AppColors.danger,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            height: 54,
+            child: ElevatedButton.icon(
+              onPressed: () => _openTab(
+                1,
+                (_) => CheckinScreen(
+                  userId: widget.user.id,
+                  employeeCode: widget.user.employeeCode,
+                  isDemoUser: widget.isDemoUser,
+                ),
+              ),
+              icon: Icon(
+                today.isWorking
+                    ? Icons.logout_rounded
+                    : Icons.fingerprint_rounded,
+                size: 22,
+              ),
+              label: Text(today.isWorking ? 'ลงเวลาออกงาน' : 'ลงเวลาเข้างาน'),
+              style: ElevatedButton.styleFrom(
+                textStyle: GoogleFonts.ibmPlexSansThai(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.md + 2),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// ตารางการ์ดเมนู 2 คอลัมน์
+  ///
+  /// ล็อกความสูงเป็นตัวเลขตายตัวแทนสัดส่วน เพราะสัดส่วนทำให้การ์ดสูงตามความกว้างจอ
+  /// (จอใหญ่ = การ์ดยิ่งสูง มีช่องว่างกลางการ์ด)
+  Widget _menuGrid(List<Widget> items) {
+    return GridView(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      padding: EdgeInsets.zero,
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 2,
+        mainAxisSpacing: 10,
+        crossAxisSpacing: 10,
+        mainAxisExtent: 104,
+      ),
+      children: items,
+    );
+  }
+
+  /// ส่วนหัวหน้าแรก — โลโก้ ชื่อผู้ใช้ รูปโปรไฟล์ และปุ่มรีเฟรช/ธีม/ออกจากระบบ
+  ///
+  /// ปุ่มพวกนี้เดิมอยู่บนแถบหัวรวมของ MainAppScreen ซึ่งซ้อนกับแถบหัวของแต่ละหน้า
+  /// ย้ายมาไว้ที่นี่เหมือนแอปฝั่ง Odoo 18
+  Widget _buildHeader() {
+    final Color accent = Theme.of(context).colorScheme.primary;
+    final Color onAccent = AppColors.onAccent(accent);
+    final bool isConsultant = widget.user.position == 'ที่ปรึกษา';
+    final user = widget.user;
+    final String name = '${user.firstname} ${user.lastname}'.trim();
+    final String firstname = user.firstname.trim();
+    final String initial = firstname.isEmpty ? '?' : firstname.substring(0, 1);
+    final String subtitle = [user.position, user.department]
+        .whereType<String>()
+        .map((s) => s.trim())
+        .where((s) => s.isNotEmpty)
+        .join(' · ');
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(20, 0, 8, 70),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [accent, AppColors.darken(accent)],
+        ),
+        borderRadius: const BorderRadius.only(
+          bottomLeft: Radius.circular(28),
+          bottomRight: Radius.circular(28),
+        ),
+      ),
+      child: SafeArea(
+        bottom: false,
+        child: Column(
+          children: [
+            Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Image.asset(
+                    'assets/npd_180x180_padded.png',
+                    height: 26,
+                    width: 26,
+                    fit: BoxFit.contain,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'NPD HRMS',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: GoogleFonts.ibmPlexSansThai(
+                      color: onAccent,
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                _headerIconButton(
+                  icon: Icons.refresh_rounded,
+                  tooltip: 'รีเฟรชข้อมูล',
+                  color: onAccent,
+                  loading: _isLoading,
+                  onTap: _isLoading ? null : refreshData,
+                ),
+                _headerIconButton(
+                  icon: Icons.palette_outlined,
+                  tooltip: 'เปลี่ยนสีธีม',
+                  color: onAccent,
+                  onTap: () => context
+                      .findAncestorStateOfType<_MainAppScreenState>()
+                      ?._showThemePicker(),
+                ),
+                _headerIconButton(
+                  icon: Icons.logout_rounded,
+                  tooltip: 'ออกจากระบบ',
+                  color: onAccent,
+                  onTap: () => context
+                      .findAncestorStateOfType<_MainAppScreenState>()
+                      ?._logout(),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            Row(
+              children: [
+                _buildAvatar(onAccent, initial),
+                const SizedBox(width: 14),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const RealTimeClock(), // Display real-time clock
-                      const SizedBox(height: 24),
-                      // Conditional rendering of the menu grid
-                      if (!isConsultant)
-                        _buildMenuGrid(
-                          context,
-                        ), // Main menu grid for non-consultants
-                      if (isConsultant)
-                        _buildConsultantMenuGrid(
-                          context,
-                        ), // Special menu for consultants
-                      const SizedBox(height: 24),
-                      // Approver section only if user is an approver AND (not a consultant OR consultant but also approver)
-                      if (_menuData?['is_approver'] ?? false)
-                        _buildApproverSection(), // Approver specific section
-                      const SizedBox(height: 24),
-                      // Conditionally hide history for consultants
-                      if (!isConsultant)
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Text(
-                              'ประวัติการลงเวลา (3 วันล่าสุด)',
-                              style: GoogleFonts.ibmPlexSansThai(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            InkWell(
-                              onTap: _showFullCheckinHistory,
-                              borderRadius: BorderRadius.circular(20),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 6,
-                                ),
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).colorScheme.primary.withOpacity(0.15),
-                                  borderRadius: BorderRadius.circular(20),
-                                  border: Border.all(
-                                    color: Theme.of(context).colorScheme.primary.withOpacity(0.5),
-                                    width: 1,
-                                  ),
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    Text(
-                                      'แสดงทั้งหมด',
-                                      style: GoogleFonts.ibmPlexSansThai(
-                                        fontSize: 12,
-                                        fontWeight: FontWeight.w600,
-                                        color: const Color(0xFF1A1A1A),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 4),
-                                    const Icon(
-                                      Icons.arrow_forward_ios,
-                                      size: 12,
-                                      color: Color(0xFF1A1A1A),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
+                      Text(
+                        '${_greeting()} 👋',
+                        style: GoogleFonts.ibmPlexSansThai(
+                          color: onAccent.withOpacity(0.85),
+                          fontSize: 13,
                         ),
-                      if (!isConsultant) const SizedBox(height: 8),
-                      if (!isConsultant)
-                        _buildHistoryList(), // Display check-in history list
-                      const SizedBox(height: 24),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        name.isEmpty ? 'NPD HRMS' : name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: GoogleFonts.ibmPlexSansThai(
+                          color: onAccent,
+                          fontSize: 20,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      if (subtitle.isNotEmpty)
+                        Text(
+                          subtitle,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: GoogleFonts.ibmPlexSansThai(
+                            color: onAccent.withOpacity(0.8),
+                            fontSize: 12,
+                          ),
+                        ),
                     ],
                   ),
                 ),
-              );
+                if (!isConsultant) ...[
+                  const SizedBox(width: 8),
+                  _headerStatusChip(onAccent),
+                ],
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
-  // Helper widget to build the main menu grid with new card items
-  Widget _buildMenuGrid(BuildContext context) {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(
-              child: _MenuCardItem(
-                icon: Icons.fingerprint_rounded,
-                label: 'ลงเวลา',
-                iconBgColor: Theme.of(context).colorScheme.primary,
-                iconColor: Theme.of(context).colorScheme.onPrimary,
-                onTap: () {
-                  final mainAppScreenState =
-                      context.findAncestorStateOfType<_MainAppScreenState>();
-                  if (mainAppScreenState != null) {
-                    mainAppScreenState.setState(() {
-                      mainAppScreenState._onItemTapped(1);
-                    });
-                  } else {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => CheckinScreen(
-                          userId: widget.user.id,
-                          isDemoUser: widget.isDemoUser,
+  /// คำทักทายตามช่วงเวลาของวัน
+  String _greeting() {
+    final hour = DateTime.now().hour;
+    if (hour < 12) return 'สวัสดีตอนเช้า';
+    if (hour < 17) return 'สวัสดีตอนบ่าย';
+    return 'สวัสดีตอนเย็น';
+  }
+
+  Widget _headerIconButton({
+    required IconData icon,
+    required String tooltip,
+    required Color color,
+    VoidCallback? onTap,
+    bool loading = false,
+  }) {
+    return IconButton(
+      onPressed: onTap,
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      icon: loading
+          ? SizedBox(
+              width: 20,
+              height: 20,
+              child: CircularProgressIndicator(
+                strokeWidth: 2,
+                valueColor: AlwaysStoppedAnimation<Color>(color),
+              ),
+            )
+          : Icon(icon, color: color),
+    );
+  }
+
+  /// รูปโปรไฟล์บนส่วนหัว — แตะเพื่อเปลี่ยนรูป
+  /// ใช้ช่องรูปเดียวกับบัตรพนักงานใน Odoo ฝ่ายบุคคลเปลี่ยนให้ก็เห็นรูปเดียวกัน
+  Widget _buildAvatar(Color onAccent, String initial) {
+    return AnimatedBuilder(
+      animation: ProfilePhotoService.instance,
+      builder: (context, _) {
+        final photo = ProfilePhotoService.instance.bytes;
+        final bool busy = ProfilePhotoService.instance.busy;
+
+        return InkWell(
+          onTap: busy ? null : _showPhotoOptions,
+          customBorder: const CircleBorder(),
+          child: Stack(
+            clipBehavior: Clip.none,
+            children: [
+              CircleAvatar(
+                radius: 26,
+                backgroundColor: onAccent.withOpacity(0.22),
+                backgroundImage: photo != null ? MemoryImage(photo) : null,
+                child: photo != null
+                    ? null
+                    : Text(
+                        initial,
+                        style: GoogleFonts.ibmPlexSansThai(
+                          color: onAccent,
+                          fontSize: 22,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
-                    );
-                  }
-                },
               ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: _MenuCardItem(
-                icon: Icons.event_note_rounded,
-                label: 'การลา',
-                iconBgColor: const Color(0xFFFFF3E0),
-                iconColor: const Color(0xFFEF6C00),
-                onTap: () {
-                  final mainAppScreenState =
-                      context.findAncestorStateOfType<_MainAppScreenState>();
-                  if (mainAppScreenState != null) {
-                    mainAppScreenState.setState(() {
-                      mainAppScreenState._onItemTapped(2);
-                    });
-                  } else {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => LeaveScreen(user: widget.user),
-                      ),
-                    );
-                  }
-                },
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        Row(
-          children: [
-            Expanded(
-              child: _MenuCardItem(
-                icon: Icons.more_time_rounded,
-                label: 'เพิ่มเวลา',
-                iconBgColor: const Color(0xFFE8F5E9),
-                iconColor: const Color(0xFF2E7D32),
-                onTap: () {
-                  final mainAppScreenState =
-                      context.findAncestorStateOfType<_MainAppScreenState>();
-                  if (mainAppScreenState != null) {
-                    mainAppScreenState.setState(() {
-                      mainAppScreenState._onItemTapped(3);
-                    });
-                  } else {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => AddTimeScreen(user: widget.user),
-                      ),
-                    );
-                  }
-                },
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: _MenuCardItem(
-                icon: Icons.account_balance_wallet_rounded,
-                label: 'สลิปเงินเดือน',
-                iconBgColor: const Color(0xFFE3F2FD),
-                iconColor: const Color(0xFF1565C0),
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => PayslipScreen(user: widget.user),
+              if (busy)
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.35),
+                      shape: BoxShape.circle,
                     ),
-                  );
-                },
+                    child: const Center(
+                      child: SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          valueColor:
+                              AlwaysStoppedAnimation<Color>(Colors.white),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              // ไอคอนกล้องเล็ก ๆ บอกว่าแตะเพื่อเปลี่ยนรูปได้
+              Positioned(
+                right: -2,
+                bottom: -2,
+                child: Container(
+                  padding: const EdgeInsets.all(4),
+                  decoration: const BoxDecoration(
+                    color: Colors.white,
+                    shape: BoxShape.circle,
+                  ),
+                  child: Icon(
+                    Icons.photo_camera_rounded,
+                    size: 12,
+                    color: AppColors.ink(Theme.of(context).colorScheme.primary),
+                  ),
+                ),
               ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 14),
-        Row(
-          children: [
-            Expanded(
-              child: _MenuCardItem(
-                icon: Icons.person_search_rounded,
-                label: 'ข้อมูลพนักงาน',
-                iconBgColor: const Color(0xFFF3E5F5),
-                iconColor: const Color(0xFF7B1FA2),
-                badgeCount: _unreadWarningCount,
-                onTap: () => _showEmployeeInfoPopup(context),
-              ),
-            ),
-            const SizedBox(width: 14),
-            Expanded(
-              child: _MenuCardItem(
-                icon: Icons.description_rounded,
-                label: 'เอกสาร ทวิ50',
-                iconBgColor: const Color(0xFFFFF8E1),
-                iconColor: const Color(0xFFE65100),
-                onTap: () => _showWtCertPopup(context),
-              ),
-            ),
-          ],
-        ),
-        // 🔔 ปุ่มทดสอบแจ้งเตือน (ซ่อนไว้ - เปิดตอน debug)
-      ],
+            ],
+          ),
+        );
+      },
     );
+  }
+
+  /// เมนูเปลี่ยนรูปโปรไฟล์
+  Future<void> _showPhotoOptions() async {
+    final bool hasPhoto = ProfilePhotoService.instance.bytes != null;
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 10),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.border,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 6),
+            _photoOption(ctx, 'camera', Icons.photo_camera_rounded, 'ถ่ายรูปใหม่'),
+            _photoOption(
+                ctx, 'gallery', Icons.photo_library_rounded, 'เลือกจากคลังภาพ'),
+            if (hasPhoto)
+              _photoOption(
+                  ctx, 'delete', Icons.delete_outline_rounded, 'ลบรูปโปรไฟล์',
+                  color: AppColors.danger),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (choice == null || !mounted) return;
+
+    String? message;
+    switch (choice) {
+      case 'camera':
+        message = await ProfilePhotoService.instance
+            .pickAndUpload(ImageSource.camera);
+        break;
+      case 'gallery':
+        message = await ProfilePhotoService.instance
+            .pickAndUpload(ImageSource.gallery);
+        break;
+      case 'delete':
+        message = await ProfilePhotoService.instance.remove();
+        break;
+    }
+    if (message != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(message, style: GoogleFonts.ibmPlexSansThai())),
+      );
+    }
+  }
+
+  Widget _photoOption(
+    BuildContext ctx,
+    String value,
+    IconData icon,
+    String label, {
+    Color color = AppColors.text,
+  }) {
+    return ListTile(
+      leading: Icon(icon, color: color),
+      title: Text(
+        label,
+        style: GoogleFonts.ibmPlexSansThai(fontSize: 15, color: color),
+      ),
+      onTap: () => Navigator.pop(ctx, value),
+    );
+  }
+
+  // เมนูหลัก — การ์ด 2 คอลัมน์ มีคำอธิบายใต้ชื่อเมนู
+  // ("ลงเวลา" ย้ายไปเป็นปุ่มใหญ่บนการ์ด "วันนี้" แล้ว)
+  Widget _buildMenuGrid(BuildContext context) {
+    return _menuGrid([
+      _ActionCard(
+        icon: Icons.event_note_rounded,
+        color: const Color(0xFFEF6C00),
+        title: 'การลา',
+        subtitle: 'ขอลาและดูประวัติ',
+        onTap: () => _openTab(2, (_) => LeaveScreen(user: widget.user)),
+      ),
+      _ActionCard(
+        icon: Icons.more_time_rounded,
+        color: const Color(0xFF2E7D32),
+        title: 'เพิ่มเวลา',
+        subtitle: 'ขอเพิ่มหรือแก้เวลา',
+        onTap: () => _openTab(3, (_) => AddTimeScreen(user: widget.user)),
+      ),
+      _ActionCard(
+        icon: Icons.account_balance_wallet_rounded,
+        color: const Color(0xFF1565C0),
+        title: 'สลิปเงินเดือน',
+        subtitle: 'ดูสลิปย้อนหลัง',
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => PayslipScreen(user: widget.user)),
+        ),
+      ),
+      _ActionCard(
+        icon: Icons.person_search_rounded,
+        color: const Color(0xFF7B1FA2),
+        title: 'ข้อมูลพนักงาน',
+        subtitle: _unreadWarningCount > 0
+            ? 'มีใบเตือนใหม่ $_unreadWarningCount ใบ'
+            : 'ข้อมูลส่วนตัวและใบเตือน',
+        badge: _unreadWarningCount > 0 ? '$_unreadWarningCount' : null,
+        onTap: () => _showEmployeeInfoPopup(context),
+      ),
+      _ActionCard(
+        icon: Icons.description_rounded,
+        color: const Color(0xFFE65100),
+        title: 'เอกสาร ทวิ50',
+        subtitle: 'หนังสือรับรองหักภาษี',
+        onTap: () => _showWtCertPopup(context),
+      ),
+      _ActionCard(
+        icon: Icons.history_rounded,
+        color: const Color(0xFF00796B),
+        title: 'ประวัติลงเวลา',
+        subtitle: 'ดูย้อนหลังรายเดือน',
+        onTap: _showFullCheckinHistory,
+      ),
+    ]);
   }
 
   // ✅ ดึงข้อมูลพนักงานจาก Odoo ผ่าน JSON-RPC
@@ -2644,7 +3207,8 @@ class _HomePageState extends State<HomePage> {
         odoo.getEmployeeWarningCount(employeeCode),
       ]);
       final data = results[0] as Map<String, dynamic>?;
-      final warnCount = results[1] as int;
+      // null = ดึงไม่ได้ ใช้ยอดเดิมที่รู้ อย่าให้ badge หายเพราะเน็ตสะดุด
+      final warnCount = (results[1] as int?) ?? _warningCount;
 
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -2781,11 +3345,25 @@ class _HomePageState extends State<HomePage> {
                         ),
                         const SizedBox(width: 14),
                         Expanded(
-                          child: Text(
-                            'เอกสาร ทวิ50',
-                            style: GoogleFonts.ibmPlexSansThai(
-                              fontSize: 18, fontWeight: FontWeight.w600, color: npdBlack,
-                            ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'เอกสาร ทวิ50',
+                                style: GoogleFonts.ibmPlexSansThai(
+                                  fontSize: 18, fontWeight: FontWeight.w600, color: npdBlack,
+                                ),
+                              ),
+                              Text(
+                                certs.length > 1
+                                    ? 'ย้อนหลัง ${certs.length} ปี (ปีใหม่สุดอยู่บนสุด)'
+                                    : 'แสดงทุกปีที่ฝ่ายบุคคลออกเอกสารให้แล้ว',
+                                style: GoogleFonts.ibmPlexSansThai(
+                                  fontSize: 12, color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         IconButton(
@@ -2869,9 +3447,13 @@ class _HomePageState extends State<HomePage> {
                                     _buildWtInfoRow('บริษัท', cert['company_name'] ?? '-'),
                                     _buildWtInfoRow('เลขผู้เสียภาษี', cert['employee_taxid'] ?? '-'),
                                     const Divider(),
-                                    _buildWtInfoRow('รายได้รวม', '${formatMoney(totalBase)} บาท', bold: true),
+                                    _buildWtInfoRow('รายได้รวมทั้งปี', '${formatMoney(totalBase)} บาท', bold: true),
                                     _buildWtInfoRow('ภาษีหัก ณ ที่จ่าย', '${formatMoney(totalTax)} บาท', bold: true, isRed: true),
-                                    _buildWtInfoRow('เงินสุทธิรวมทั้งปี', '${formatMoney(cert['total_net_salary'])} บาท', bold: true),
+                                    // ยอดกองทุนตามที่ระบุบนหนังสือรับรองฯ (ใช้ยื่นภาษีเพื่อลดหย่อน)
+                                    _buildWtInfoRow('กองทุนประกันสังคม (ทั้งปี)',
+                                        '${formatMoney(cert['sso_amount'])} บาท'),
+                                    _buildWtInfoRow('กองทุนสำรองเลี้ยงชีพ (ทั้งปี)',
+                                        '${formatMoney(cert['provident_fund_amount'])} บาท'),
                                     const SizedBox(height: 12),
                                     // Download PDF button
                                     SizedBox(
@@ -3294,157 +3876,108 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  // New helper widget for consultant's specific menu grid
+  // เมนูของที่ปรึกษา — มีแค่สลิปเงินเดือน
   Widget _buildConsultantMenuGrid(BuildContext context) {
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-          children: [
-            Expanded(
-              child: _MenuCardItem(
-                icon: Icons.account_balance_wallet_rounded,
-                label: 'สลิปเงินเดือน',
-                iconBgColor: const Color(0xFFE3F2FD),
-                iconColor: const Color(0xFF1565C0),
-                onTap: () {
-                  final mainAppScreenState =
-                      context.findAncestorStateOfType<_MainAppScreenState>();
-                  if (mainAppScreenState != null) {
-                    // Find the index of PayslipScreen for consultants
-                    int payslipIndex = mainAppScreenState._pages.indexWhere(
-                      (page) => page is PayslipScreen,
-                    );
-                    if (payslipIndex != -1) {
-                      mainAppScreenState.setState(() {
-                        mainAppScreenState._onItemTapped(payslipIndex);
-                      });
-                    } else {
-                      Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                          builder: (context) =>
-                              PayslipScreen(user: widget.user),
-                        ), // Pass user object here
-                      );
-                    }
-                  } else {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) => PayslipScreen(user: widget.user),
-                      ), // Pass user object here
-                    );
-                  }
-                },
+    return _menuGrid([
+      _ActionCard(
+        icon: Icons.account_balance_wallet_rounded,
+        color: const Color(0xFF1565C0),
+        title: 'สลิปเงินเดือน',
+        subtitle: 'ดูสลิปย้อนหลัง',
+        onTap: () {
+          // ที่ปรึกษามีสลิปเป็นแท็บบนแถบเมนูล่าง — สลับแท็บแทนการเปิดหน้าซ้อน
+          final shell = context.findAncestorStateOfType<_MainAppScreenState>();
+          final int payslipIndex =
+              shell?._pages.indexWhere((page) => page is PayslipScreen) ?? -1;
+          if (shell != null && payslipIndex != -1) {
+            shell._onItemTapped(payslipIndex);
+          } else {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => PayslipScreen(user: widget.user),
               ),
-            ),
-          ],
-        ),
-      ],
-    );
+            );
+          }
+        },
+      ),
+    ]);
   }
 
   // Helper widget to build the approver section
   Widget _buildApproverSection() {
-    final leaveCount = _menuData?['pending_leave_count'] ?? 0;
-    final addTimeCount = _menuData?['pending_addtime_count'] ?? 0;
-
-    final Color primaryColor = Theme.of(context).colorScheme.primary;
-    final Color npdOrange = Theme.of(context).colorScheme.primaryContainer;
-    final Color onSurfaceColor = Theme.of(context).colorScheme.onSurface;
+    final int leaveCount = _asCount(_menuData?['pending_leave_count']);
+    final int addTimeCount = _asCount(_menuData?['pending_addtime_count']);
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          'สำหรับผู้อนุมัติ',
-          style: GoogleFonts.ibmPlexSansThai(fontSize: 17, fontWeight: FontWeight.w500),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: _ApprovalCard(
-                label: 'อนุมัติการลา',
-                count: leaveCount,
-                icon: Icons.playlist_add_check_circle_outlined,
-                onTap: () {
-                  // 🔔 mark as seen + ยกเลิกแจ้งเตือน
-                  markApproverLeaveAsSeen();
-                  final mainAppScreenState =
-                      context.findAncestorStateOfType<_MainAppScreenState>();
-                  if (mainAppScreenState != null) {
-                    // Dynamically find index for ApproveLeaveScreen
-                    int approveLeaveIndex = mainAppScreenState._pages
-                        .indexWhere((page) => page is ApproveLeaveScreen);
-                    if (approveLeaveIndex != -1) {
-                      mainAppScreenState.setState(() {
-                        mainAppScreenState._onItemTapped(approveLeaveIndex);
-                      });
-                    }
-                  } else {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            ApproveLeaveScreen(user: widget.user),
-                      ),
-                    );
-                  }
-                },
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: _ApprovalCard(
-                label: 'อนุมัติเพิ่มเวลา',
-                count: addTimeCount,
-                icon: Icons.person_add_alt_1_outlined,
-                onTap: () {
-                  // 🔔 mark as seen + ยกเลิกแจ้งเตือน
-                  markApproverAddTimeAsSeen();
-                  final mainAppScreenState =
-                      context.findAncestorStateOfType<_MainAppScreenState>();
-                  if (mainAppScreenState != null) {
-                    // Dynamically find index for ApproveAddTimeScreen
-                    int approveAddTimeIndex = mainAppScreenState._pages
-                        .indexWhere((page) => page is ApproveAddTimeScreen);
-                    if (approveAddTimeIndex != -1) {
-                      mainAppScreenState.setState(() {
-                        mainAppScreenState._onItemTapped(approveAddTimeIndex);
-                      });
-                    }
-                  } else {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (context) =>
-                            ApproveAddTimeScreen(user: widget.user),
-                      ),
-                    );
-                  }
-                },
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 24),
+        const AppSectionHeader('สำหรับผู้อนุมัติ'),
+        _menuGrid([
+          _ActionCard(
+            icon: Icons.event_available_rounded,
+            color: const Color(0xFF0277BD),
+            title: 'อนุมัติการลา',
+            subtitle:
+                leaveCount > 0 ? '$leaveCount คำขอรออนุมัติ' : 'ไม่มีคำขอค้าง',
+            badge: leaveCount > 0 ? '$leaveCount' : null,
+            onTap: () {
+              // 🔔 mark as seen + ยกเลิกแจ้งเตือน
+              markApproverLeaveAsSeen();
+              _openApprovalsTab(0, (_) => ApproveLeaveScreen(user: widget.user));
+            },
+          ),
+          _ActionCard(
+            icon: Icons.more_time_rounded,
+            color: const Color(0xFF00695C),
+            title: 'อนุมัติเพิ่มเวลา',
+            subtitle: addTimeCount > 0
+                ? '$addTimeCount คำขอรออนุมัติ'
+                : 'ไม่มีคำขอค้าง',
+            badge: addTimeCount > 0 ? '$addTimeCount' : null,
+            onTap: () {
+              // 🔔 mark as seen + ยกเลิกแจ้งเตือน
+              markApproverAddTimeAsSeen();
+              _openApprovalsTab(
+                  1, (_) => ApproveAddTimeScreen(user: widget.user));
+            },
+          ),
+        ]),
       ],
     );
+  }
+
+  /// เปิดหน้าอนุมัติตรงแท็บที่ต้องการ — ถ้าไม่มีแถบเมนูล่าง (หน้าแรกเปิดเดี่ยว) เปิดเป็นหน้าใหม่
+  void _openApprovalsTab(int tab, WidgetBuilder fallback) {
+    final shell = context.findAncestorStateOfType<_MainAppScreenState>();
+    if (shell != null &&
+        shell._pages.any((page) => page is ApprovalsHubScreen)) {
+      shell._openApprovals(tab);
+    } else {
+      Navigator.push(context, MaterialPageRoute(builder: fallback));
+    }
   }
 
   // Helper widget to build the check-in history list
   Widget _buildHistoryList() {
     final List history = _menuData?['checkin_history'] ?? [];
     if (history.isEmpty) {
-      return Container(
-        padding: const EdgeInsets.symmetric(vertical: 40.0),
-        child: Center(
-          child: Text(
-            'ไม่มีข้อมูลการลงเวลา',
-            style: GoogleFonts.ibmPlexSansThai(fontSize: 15, color: Colors.grey.shade600),
-          ),
+      return AppPanel(
+        padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 16),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.event_busy_rounded,
+                size: 36, color: AppColors.textFaint),
+            const SizedBox(height: 8),
+            Text(
+              'ยังไม่มีการลงเวลาใน 3 วันล่าสุด',
+              style: GoogleFonts.ibmPlexSansThai(
+                fontSize: 14,
+                color: AppColors.textMuted,
+              ),
+            ),
+          ],
         ),
       );
     }
@@ -3482,56 +4015,42 @@ class _HomePageState extends State<HomePage> {
         List<Map<String, dynamic>> pairedEntries = [];
         List<Map<String, dynamic>> unmatchedEntries = [];
 
-        // Simple pairing: Find an 'in', then the next 'out'
         Map<String, dynamic>? currentIn;
         for (var entry in entriesForDate) {
           if (entry['check_type'] == 'in') {
             if (currentIn != null) {
-              // Found another 'in' before an 'out' for the previous 'in'
               pairedEntries.add({'in': currentIn, 'out': null});
             }
             currentIn = entry;
           } else if (entry['check_type'] == 'out') {
             if (currentIn != null) {
-              // Found an 'out' after an 'in'
               pairedEntries.add({'in': currentIn, 'out': entry});
-              currentIn = null; // Reset for next pair
+              currentIn = null;
             } else {
-              // Standalone 'out' without preceding 'in'
               unmatchedEntries.add(entry);
             }
           }
         }
-        // Add any remaining 'in' entry that didn't get an 'out'
         if (currentIn != null) {
           pairedEntries.add({'in': currentIn, 'out': null});
         }
-        // Add any standalone 'out' entries (e.g., if clock-in was missed or on previous day)
-        // These will be displayed as an 'out' without a corresponding 'in' bubble
         for (var unmatched in unmatchedEntries) {
           pairedEntries.add({'in': null, 'out': unmatched});
         }
 
-        // Re-sort paired entries by the earliest time in the pair for consistent display
         pairedEntries.sort((a, b) {
           String? timeA =
               a['in']?['full_datetime'] ?? a['out']?['full_datetime'];
           String? timeB =
               b['in']?['full_datetime'] ?? b['out']?['full_datetime'];
-          if (timeA == null || timeB == null)
-            return 0; // Handle nulls if necessary
+          if (timeA == null || timeB == null) return 0;
           return timeA.compareTo(timeB);
         });
 
-        return Card(
-          elevation: 2,
-          color: Theme.of(context).colorScheme.surface,
-          margin: const EdgeInsets.symmetric(vertical: 8),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(15),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(16.0),
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 10),
+          child: AppPanel(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -3539,19 +4058,25 @@ class _HomePageState extends State<HomePage> {
                 Text(
                   _formatDateForHistory(currentDate),
                   style: GoogleFonts.ibmPlexSansThai(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 18,
-                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14.5,
+                    color: AppColors.text,
                   ),
                 ),
-                const Divider(height: 16, thickness: 1), // Separator for date
+                const SizedBox(height: 6),
                 // Display each paired check-in/out entry for this date
-                ...pairedEntries.map((pair) {
-                  final String? inTime = pair['in']?['work_time'];
-                  final String? outTime = pair['out']?['work_time'];
-
-                  return _CheckInOutPairCard(inTime: inTime, outTime: outTime);
-                }).toList(),
+                ...(() {
+                  final info = _lateMinutes[currentDate];
+                  final lateRow = lateRowIndexFor(pairedEntries, info);
+                  return pairedEntries.asMap().entries.map((e) {
+                    final pair = e.value;
+                    return _CheckInOutPairCard(
+                      inTime: pair['in']?['work_time'],
+                      outTime: pair['out']?['work_time'],
+                      lateMinutes: e.key == lateRow ? info?.minutes : null,
+                    );
+                  }).toList();
+                })(),
               ],
             ),
           ),
@@ -3561,192 +4086,99 @@ class _HomePageState extends State<HomePage> {
   }
 }
 
-// ✅ เมนูการ์ดแบบทันสมัย - ไอคอนสีต่างกันแต่ละเมนู
-class _MenuCardItem extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final VoidCallback onTap;
-  final Color iconBgColor;
-  final Color iconColor;
-  final int badgeCount;
-
-  const _MenuCardItem({
+/// การ์ดเมนูบนหน้าแรก — ไอคอนสีเฉพาะเมนู ชื่อ และคำอธิบายสั้น
+class _ActionCard extends StatelessWidget {
+  const _ActionCard({
     required this.icon,
-    required this.label,
+    required this.color,
+    required this.title,
+    required this.subtitle,
     required this.onTap,
-    required this.iconBgColor,
-    required this.iconColor,
-    this.badgeCount = 0,
+    this.badge,
   });
+
+  final IconData icon;
+  final Color color;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  /// ตัวเลขสีแดงมุมขวาบน เช่นจำนวนคำขอที่รออนุมัติ
+  final String? badge;
 
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: Colors.transparent,
+      color: AppColors.surface,
+      elevation: 1,
+      shadowColor: Colors.black.withValues(alpha: 0.06),
+      borderRadius: BorderRadius.circular(16),
       child: InkWell(
+        borderRadius: BorderRadius.circular(16),
         onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        splashColor: iconBgColor.withOpacity(0.3),
         child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 22, horizontal: 16),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(18),
-            border: Border.all(color: Colors.grey.shade100, width: 1),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.04),
-                blurRadius: 16,
-                offset: const Offset(0, 4),
-              ),
-            ],
-          ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    padding: const EdgeInsets.all(14),
-                    decoration: BoxDecoration(
-                      color: iconBgColor,
-                      borderRadius: BorderRadius.circular(16),
-                    ),
-                    child: Icon(icon, size: 28, color: iconColor),
-                  ),
-                  if (badgeCount > 0)
-                    Positioned(
-                      right: -6,
-                      top: -6,
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                            horizontal: 7, vertical: 3),
-                        constraints: const BoxConstraints(
-                            minWidth: 22, minHeight: 22),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade600,
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: Colors.white, width: 2),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(
-                          badgeCount > 99 ? '99+' : '$badgeCount',
-                          style: GoogleFonts.ibmPlexSansThai(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              Text(
-                label,
-                textAlign: TextAlign.center,
-                style: GoogleFonts.ibmPlexSansThai(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: const Color(0xFF1A1A1A),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// Widget for approval cards - ธีมเหลือง gradient
-class _ApprovalCard extends StatelessWidget {
-  final String label;
-  final int count;
-  final IconData icon;
-  final VoidCallback onTap;
-
-  const _ApprovalCard({
-    required this.label,
-    required this.count,
-    required this.icon,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    // ✅ ใช้สีจาก Theme — onPrimary ดำเฉพาะธีมเหลืองเดิม, สีอื่น = ขาว
-    final Color npdYellow = Theme.of(context).colorScheme.primary;
-    final Color npdBlack = Theme.of(context).colorScheme.onPrimary;
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(18),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: [
-                npdYellow,
-                Color.lerp(npdYellow, Colors.white, 0.4) ?? npdYellow,
-              ],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(
+              color: AppColors.frame(Theme.of(context).colorScheme.primary),
             ),
-            borderRadius: BorderRadius.circular(18),
-            boxShadow: [
-              BoxShadow(
-                color: npdYellow.withOpacity(0.3),
-                blurRadius: 12,
-                offset: const Offset(0, 4),
-              ),
-            ],
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Container(
-                    padding: const EdgeInsets.all(10),
+                    width: 38,
+                    height: 38,
                     decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.5),
+                      color: color.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(12),
                     ),
-                    child: Icon(icon, size: 28, color: npdBlack),
+                    child: Icon(icon, color: color, size: 21),
                   ),
-                  if (count > 0)
+                  const Spacer(),
+                  if (badge != null)
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 10,
-                        vertical: 5,
-                      ),
+                      padding:
+                          const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                       decoration: BoxDecoration(
-                        color: Colors.red,
+                        color: AppColors.danger,
                         borderRadius: BorderRadius.circular(20),
                       ),
                       child: Text(
-                        count.toString(),
+                        badge!,
                         style: GoogleFonts.ibmPlexSansThai(
                           color: Colors.white,
-                          fontWeight: FontWeight.w600,
-                          fontSize: 13,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
                 ],
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 8),
               Text(
-                label,
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
                 style: GoogleFonts.ibmPlexSansThai(
                   fontSize: 14,
-                  fontWeight: FontWeight.w600,
-                  color: npdBlack,
+                  fontWeight: FontWeight.w700,
+                  height: 1.25,
+                  color: AppColors.text,
+                ),
+              ),
+              Text(
+                subtitle,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.ibmPlexSansThai(
+                  fontSize: 11.5,
+                  height: 1.3,
+                  color: AppColors.textMuted,
                 ),
               ),
             ],
@@ -3757,8 +4189,114 @@ class _ApprovalCard extends StatelessWidget {
   }
 }
 
+/// สถานะการลงเวลาของวันนี้ ที่หน้าแรกสรุปจากประวัติ
+class _TodayStatus {
+  const _TodayStatus({this.firstIn, this.lastOut, this.lastType});
+
+  final String? firstIn;
+  final String? lastOut;
+
+  /// 'in' / 'out' / null (วันนี้ยังไม่ลงเวลา)
+  final String? lastType;
+
+  bool get isWorking => lastType == 'in';
+}
+
+/// ช่องเวลาเข้างาน/ออกงานบนการ์ด "วันนี้"
+class _TimeStat extends StatelessWidget {
+  const _TimeStat({
+    required this.icon,
+    required this.label,
+    required this.time,
+    required this.color,
+    this.note,
+  });
+
+  final IconData icon;
+  final String label;
+  final String? time;
+  final Color color;
+  final String? note;
+
+  @override
+  Widget build(BuildContext context) {
+    final String? value = time;
+    final bool hasTime = value != null && value.isNotEmpty;
+
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(AppRadius.md),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, size: 16, color: hasTime ? color : AppColors.textFaint),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: GoogleFonts.ibmPlexSansThai(
+                  fontSize: 12.5,
+                  color: AppColors.textMuted,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Text(
+            hasTime ? '${_hhmm(value)} น.' : '--:--',
+            style: GoogleFonts.ibmPlexSansThai(
+              fontSize: 20,
+              fontWeight: FontWeight.w700,
+              height: 1.2,
+              color: hasTime ? AppColors.text : AppColors.textFaint,
+            ),
+          ),
+          if (note != null)
+            Text(
+              note!,
+              style: GoogleFonts.ibmPlexSansThai(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: AppColors.danger,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// "08:02:15" → "08:02" (เวลาจากระบบอาจมีวินาทีติดมา)
+String _hhmm(String time) =>
+    time.length > 5 && time[2] == ':' ? time.substring(0, 5) : time;
+
+/// "สาย 22 นาที" / "สาย 1 ชม 5 นาที"
+String _lateLabel(int minutes) {
+  if (minutes < 60) return 'สาย $minutes นาที';
+  final h = minutes ~/ 60;
+  final m = minutes % 60;
+  return m == 0 ? 'สาย $h ชม' : 'สาย $h ชม $m นาที';
+}
+
+/// ตัวเลขจำนวนจาก JSON — กันกรณีเซิร์ฟเวอร์ส่งมาเป็นสตริงหรือ null
+int _asCount(dynamic value) =>
+    value is num ? value.toInt() : int.tryParse('$value') ?? 0;
+
+/// "YYYY-MM-DD" แบบเดียวกับ work_date ที่ระบบส่งมา
+String _dateKey(DateTime d) =>
+    '${d.year.toString().padLeft(4, '0')}-'
+    '${d.month.toString().padLeft(2, '0')}-'
+    '${d.day.toString().padLeft(2, '0')}';
+
 class RealTimeClock extends StatefulWidget {
-  const RealTimeClock({super.key});
+  const RealTimeClock({super.key, this.trailing});
+
+  /// วางไว้ท้ายบรรทัดเวลา เช่นป้ายสถานะการทำงานของวันนี้
+  final Widget? trailing;
 
   @override
   State<RealTimeClock> createState() => _RealTimeClockState();
@@ -3766,16 +4304,14 @@ class RealTimeClock extends StatefulWidget {
 
 class _RealTimeClockState extends State<RealTimeClock> {
   late Timer _timer;
-  String _formattedDateTime = '';
+  DateTime _now = DateTime.now();
 
   @override
   void initState() {
     super.initState();
-    _updateTime();
-    _timer = Timer.periodic(
-      const Duration(seconds: 1),
-      (Timer t) => _updateTime(),
-    );
+    _timer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() => _now = DateTime.now());
+    });
   }
 
   @override
@@ -3784,56 +4320,37 @@ class _RealTimeClockState extends State<RealTimeClock> {
     super.dispose();
   }
 
-  void _updateTime() {
-    if (!mounted) return;
-    final now = DateTime.now();
-    final formatter = DateFormat("EEEEที่ d MMMM yyyy, HH:mm:ss", "th");
-    setState(() {
-      _formattedDateTime = formatter.format(now);
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
-    // ✅ ใช้สีจาก Theme — onPrimary ดำเฉพาะธีมเหลืองเดิม, สีอื่น = ขาว
-    final Color npdYellow = Theme.of(context).colorScheme.primary;
-    final Color npdBlack = Theme.of(context).colorScheme.onPrimary;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [npdYellow, npdYellow.withOpacity(0.7)],
-          begin: Alignment.centerLeft,
-          end: Alignment.centerRight,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          DateFormat('EEEEที่ d MMMM yyyy', 'th').format(_now),
+          style: GoogleFonts.ibmPlexSansThai(
+            fontSize: 13.5,
+            fontWeight: FontWeight.w500,
+            color: AppColors.textMuted,
+          ),
         ),
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: npdYellow.withOpacity(0.25),
-            blurRadius: 12,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.schedule_rounded, color: npdBlack, size: 20),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Text(
-              _formattedDateTime,
+        Row(
+          children: [
+            Text(
+              DateFormat('HH:mm:ss').format(_now),
               style: GoogleFonts.ibmPlexSansThai(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: npdBlack,
+                fontSize: 34,
+                fontWeight: FontWeight.w700,
+                height: 1.2,
+                color: AppColors.text,
+                // ตัวเลขกว้างเท่ากัน วินาทีเดินแล้วตัวหนังสือไม่ขยับไปมา
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
-              overflow: TextOverflow.ellipsis,
             ),
-          ),
-        ],
-      ),
+            const Spacer(),
+            if (widget.trailing != null) widget.trailing!,
+          ],
+        ),
+      ],
     );
   }
 }
@@ -3875,53 +4392,80 @@ class PlaceholderPage extends StatelessWidget {
   }
 }
 
+/// หาว่าใน 1 วัน ควรแสดงข้อความ "สาย" ที่แถวไหน
+///
+/// วันหนึ่งสแกนเข้าได้หลายครั้ง แต่ระบบคิดสายจาก "ครั้งแรกของวัน" ครั้งเดียว
+/// จึงต้องแปะข้อความแค่แถวนั้น ไม่ใช่ทุกแถว (ไม่งั้นเข้า 09:52 กับ 10:28
+/// จะขึ้นสายเท่ากันทั้งคู่ ซึ่งผิด)
+///
+/// จับคู่ด้วยเวลาเข้าที่ Odoo ใช้คำนวณก่อน — ถ้าไม่ตรงสักแถว
+/// (เช่นถูก manual_time_log แก้เวลา) ค่อยตกมาใช้แถวแรกที่มีการเข้างาน
+int lateRowIndexFor(List<Map<String, dynamic>> pairs, LateInfo? info) {
+  if (info == null) return -1;
+  if (info.checkin.isNotEmpty) {
+    for (int i = 0; i < pairs.length; i++) {
+      if (pairs[i]['in']?['work_time'] == info.checkin) return i;
+    }
+  }
+  for (int i = 0; i < pairs.length; i++) {
+    if (pairs[i]['in'] != null) return i;
+  }
+  return -1;
+}
+
 class _CheckInOutPairCard extends StatelessWidget {
   final String? inTime;
   final String? outTime;
+
+  /// นาทีที่สายของวันนั้น — มาจากสูตรที่ตั้งไว้ใน Odoo (ไม่ได้คำนวณในแอป)
+  /// null หรือ 0 = ไม่สาย → ไม่แสดงข้อความอะไรเลย
+  final int? lateMinutes;
 
   const _CheckInOutPairCard({
     Key? key,
     required this.inTime,
     required this.outTime,
+    this.lateMinutes,
   }) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    Color cardColor;
-    if (inTime != null && outTime != null) {
-      cardColor = Theme.of(context).colorScheme.primary.withOpacity(0.12);
-    } else if (inTime != null) {
-      cardColor = Colors.green.shade50.withOpacity(0.5);
-    } else if (outTime != null) {
-      cardColor = Colors.red.shade50.withOpacity(0.5);
-    } else {
-      cardColor = Colors.grey.shade50.withOpacity(0.5);
-    }
-
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 8.0),
-      padding: const EdgeInsets.all(12.0),
+      margin: const EdgeInsets.symmetric(vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
       decoration: BoxDecoration(
-        color: cardColor,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200, width: 1),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withOpacity(0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          ),
-        ],
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(AppRadius.sm + 2),
       ),
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Expanded(
-            child: _TimeEntryBubble(
-              label: 'เข้า',
-              time: inTime ?? '-',
-              isCheckIn: true,
-              showIcon: inTime != null,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                _TimeEntryBubble(
+                  label: 'เข้า',
+                  time: inTime ?? '-',
+                  isCheckIn: true,
+                  showIcon: inTime != null,
+                ),
+                // สายกี่นาที — วางใต้เวลาเข้างาน แสดงเฉพาะวันที่สายจริง
+                if (inTime != null && (lateMinutes ?? 0) > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 4, left: 38),
+                    child: Text(
+                      _lateLabel(lateMinutes!),
+                      style: GoogleFonts.ibmPlexSansThai(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.danger,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+              ],
             ),
           ),
           const SizedBox(width: 10),
@@ -3943,6 +4487,8 @@ class _TimeEntryBubble extends StatelessWidget {
   final String label;
   final String time;
   final bool isCheckIn;
+
+  /// มีเวลาจริงไหม — ไม่มีจะแสดงเป็น "--:--" สีจาง
   final bool showIcon;
 
   const _TimeEntryBubble({
@@ -3955,24 +4501,51 @@ class _TimeEntryBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final Color textColor =
-        isCheckIn ? Colors.green.shade800 : Colors.red.shade800;
-    final IconData icon = isCheckIn ? Icons.login : Icons.logout;
+    final Color tone = showIcon
+        ? (isCheckIn ? AppColors.success : AppColors.danger)
+        : AppColors.textFaint;
 
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        if (showIcon) Icon(icon, size: 17, color: textColor),
-        if (showIcon) const SizedBox(width: 8),
+        Container(
+          width: 30,
+          height: 30,
+          decoration: BoxDecoration(
+            color: tone.withValues(alpha: 0.12),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            isCheckIn ? Icons.login_rounded : Icons.logout_rounded,
+            size: 16,
+            color: tone,
+          ),
+        ),
+        const SizedBox(width: 8),
         Flexible(
-          child: Text(
-            '$label: $time น.',
-            style: GoogleFonts.ibmPlexSansThai(
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              color: textColor,
-            ),
-            overflow: TextOverflow.ellipsis,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                label,
+                style: GoogleFonts.ibmPlexSansThai(
+                  fontSize: 11.5,
+                  height: 1.2,
+                  color: AppColors.textMuted,
+                ),
+              ),
+              Text(
+                showIcon ? '${_hhmm(time)} น.' : '--:--',
+                overflow: TextOverflow.ellipsis,
+                style: GoogleFonts.ibmPlexSansThai(
+                  fontSize: 14.5,
+                  fontWeight: FontWeight.w600,
+                  height: 1.3,
+                  color: showIcon ? AppColors.text : AppColors.textFaint,
+                ),
+              ),
+            ],
           ),
         ),
       ],
@@ -4003,6 +4576,9 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
   bool _isLoading = true;
   List<dynamic> _checkinHistory = [];
   String _errorMessage = '';
+
+  /// ข้อมูลสายรายวัน — ดึงจาก Odoo ตามสูตรที่ตั้งไว้
+  Map<String, LateInfo> _lateMinutes = {};
 
   final List<String> _thaiMonths = [
     'มกราคม', 'กุมภาพันธ์', 'มีนาคม', 'เมษายน',
@@ -4038,6 +4614,10 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
           setState(() {
             _checkinHistory = data['checkin_history'] ?? [];
           });
+          // ✅ ดึงนาทีสายตามสูตรใน Odoo (ล้มเหลวก็แค่ไม่แสดงข้อความ ไม่ทำให้หน้าพัง)
+          final late = await OdooRpcService().getLateMinutes(
+              widget.user.employeeCode ?? '', _selectedMonth, _selectedYear);
+          if (mounted) setState(() => _lateMinutes = late);
         } else {
           setState(() {
             _errorMessage = data['message'] ?? 'ไม่สามารถดึงข้อมูลได้';
@@ -4073,7 +4653,7 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppGradientBar(
         title: Text('ประวัติการลงเวลาทั้งหมด', style: GoogleFonts.ibmPlexSansThai()),
         actions: [
           IconButton(
@@ -4095,7 +4675,7 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
                   child: Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12),
                     decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey.shade300),
+                      border: Border.all(color: AppColors.frame(Theme.of(context).colorScheme.primary)),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: DropdownButtonHideUnderline(
@@ -4124,7 +4704,7 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    border: Border.all(color: Colors.grey.shade300),
+                    border: Border.all(color: AppColors.frame(Theme.of(context).colorScheme.primary)),
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: DropdownButtonHideUnderline(
@@ -4248,7 +4828,10 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
 
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(15),
+            side: BorderSide(color: AppColors.frame(Theme.of(context).colorScheme.primary)),
+          ),
           child: Padding(
             padding: const EdgeInsets.all(16),
             child: Column(
@@ -4260,16 +4843,23 @@ class _FullCheckinHistoryScreenState extends State<FullCheckinHistoryScreen> {
                   style: GoogleFonts.ibmPlexSansThai(
                     fontSize: 15,
                     fontWeight: FontWeight.w600,
-                    color: Theme.of(context).colorScheme.primary,
+                    color: AppColors.text,
                   ),
                 ),
                 const Divider(),
                 // แสดงคู่ เข้า-ออก แบบเดียวกับหน้าหลัก
-                ...pairedEntries.map((pair) {
-                  String? inTime = pair['in']?['work_time'];
-                  String? outTime = pair['out']?['work_time'];
-                  return _CheckInOutPairCard(inTime: inTime, outTime: outTime);
-                }).toList(),
+                ...(() {
+                  final info = _lateMinutes[date];
+                  final lateRow = lateRowIndexFor(pairedEntries, info);
+                  return pairedEntries.asMap().entries.map((e) {
+                    final pair = e.value;
+                    return _CheckInOutPairCard(
+                      inTime: pair['in']?['work_time'],
+                      outTime: pair['out']?['work_time'],
+                      lateMinutes: e.key == lateRow ? info?.minutes : null,
+                    );
+                  }).toList();
+                })(),
               ],
             ),
           ),

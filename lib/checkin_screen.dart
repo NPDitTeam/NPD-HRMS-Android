@@ -1,22 +1,33 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:google_fonts/google_fonts.dart';
+
+import 'odoo_rpc_service.dart';
+import 'package:intl/intl.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:http/http.dart' as http;
 import 'dart:io';
 
+import 'ui/app_theme.dart';
+
 class CheckinScreen extends StatefulWidget {
   final int userId;
   final bool isDemoUser;
   final Function(String message, bool isSuccess)? onCheckinComplete;
+
+  /// รหัสพนักงาน — ใช้ถาม Odoo ว่าถูกพักงานอยู่ไหม
+  /// (user_id ที่ใช้กับ PHP เป็นคนละรหัสกัน จึงต้องส่งตัวนี้มาด้วย)
+  final String? employeeCode;
 
   const CheckinScreen({
     super.key,
     required this.userId,
     this.isDemoUser = false,
     this.onCheckinComplete,
+    this.employeeCode,
   });
 
   @override
@@ -36,10 +47,22 @@ class CheckinScreenState extends State<CheckinScreen> {
   GoogleMapController? _mapController;
   final Set<Circle> _circles = {};
 
+  Map<String, dynamic>? _suspension; // ไม่ null = กำลังถูกพักงาน
+
   @override
   void initState() {
     super.initState();
+    _loadSuspension();
     _initializeCheckin();
+  }
+
+  /// ถาม Odoo ว่าวันนี้ถูกพักงานอยู่ไหม ถ้าใช่จะบล็อกไม่ให้ลงเวลา
+  Future<void> _loadSuspension() async {
+    final code = widget.employeeCode;
+    if (code == null || code.isEmpty) return;
+    final data = await OdooRpcService().getSuspensionStatus(code);
+    if (!mounted || _isDisposed) return;
+    _safeSetState(() => _suspension = data);
   }
 
   @override
@@ -60,6 +83,7 @@ class CheckinScreenState extends State<CheckinScreen> {
   // ✅ Public method สำหรับรีเฟรชข้อมูลจากภายนอก
   Future<void> refreshData() async {
     if (_isDisposed) return;
+    await _loadSuspension();
     await _initializeCheckin();
   }
 
@@ -435,7 +459,7 @@ class CheckinScreenState extends State<CheckinScreen> {
     final bool enableCheckOutButton = (canCheckOut && inRange) && !_isLoading;
 
     return Scaffold(
-      appBar: AppBar(
+      appBar: AppGradientBar(
         automaticallyImplyLeading: true, // ไม่ต้องมีปุ่ม back
         title: const Text('ลงเวลาเข้า-ออกงาน'),
         centerTitle: true, // ไอคอนจะอยู่ตรงกลางถ้าอยากได้
@@ -447,13 +471,170 @@ class CheckinScreenState extends State<CheckinScreen> {
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _errorMessage != null
-              ? Center(
-                  child: Text(_errorMessage!,
-                      style: const TextStyle(color: Colors.red)))
-              : _buildBody(canCheckIn, canCheckOut, inRange, initialLocation),
+      body: _suspension != null
+          ? _buildSuspendedBody()
+          : _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : _errorMessage != null
+                  ? Center(
+                      child: Text(_errorMessage!,
+                          style: const TextStyle(color: Colors.red)))
+                  : _buildBody(
+                      canCheckIn, canCheckOut, inRange, initialLocation),
+    );
+  }
+
+  /// แปลง 2026-09-18 เป็น 18 ก.ย. 2569 ให้อ่านง่าย
+  String _thaiDate(String? raw) {
+    if (raw == null || raw.isEmpty) return '-';
+    final parts = raw.split('-');
+    if (parts.length != 3) return raw;
+    const months = [
+      'ม.ค.', 'ก.พ.', 'มี.ค.', 'เม.ย.', 'พ.ค.', 'มิ.ย.',
+      'ก.ค.', 'ส.ค.', 'ก.ย.', 'ต.ค.', 'พ.ย.', 'ธ.ค.'
+    ];
+    final year = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    final day = int.tryParse(parts[2]);
+    if (year == null || month == null || day == null) return raw;
+    if (month < 1 || month > 12) return raw;
+    return '$day ${months[month - 1]} ${year + 543}';
+  }
+
+  /// หน้าจอตอนถูกพักงาน — ไม่แสดงปุ่มลงเวลาเลย
+  ///
+  /// ตั้งใจไม่ให้กดได้ ไม่ใช่กดแล้วเด้ง error เพราะพนักงานควรเห็นตั้งแต่แรกว่า
+  /// ทำไมถึงลงเวลาไม่ได้ และถูกพักงานถึงเมื่อไร จะได้ไม่ต้องไปถาม HR
+  Widget _buildSuspendedBody() {
+    final data = _suspension!;
+    final start = _thaiDate(data['date_start'] as String?);
+    final end = _thaiDate(data['date_end'] as String?);
+    final reason = (data['reason'] as String?)?.trim() ?? '';
+    final note = (data['note'] as String?)?.trim() ?? '';
+    final days = data['day_count'];
+
+    return SafeArea(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const SizedBox(height: 24),
+            Icon(Icons.gpp_maybe_rounded,
+                size: 78, color: Colors.orange.shade700),
+            const SizedBox(height: 16),
+            Text('อยู่ในช่วงถูกพักงาน',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.ibmPlexSansThai(
+                    fontSize: 22, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('ระหว่างนี้ยังลงเวลาเข้า-ออกงานไม่ได้',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.ibmPlexSansThai(
+                    fontSize: 15, color: Colors.grey.shade700)),
+            const SizedBox(height: 24),
+            Card(
+              elevation: 0,
+              color: Colors.orange.shade50,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+                side: BorderSide(color: Colors.orange.shade200),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _suspensionRow(Icons.event_busy_rounded, 'ตั้งแต่วันที่', start),
+                    const SizedBox(height: 10),
+                    _suspensionRow(Icons.event_available_rounded, 'ถึงวันที่', end),
+                    if (days != null) ...[
+                      const SizedBox(height: 10),
+                      _suspensionRow(
+                          Icons.today_rounded, 'รวม', '$days วัน'),
+                    ],
+                    if (reason.isNotEmpty) ...[
+                      const Divider(height: 24),
+                      Text('เหตุผล',
+                          style: GoogleFonts.ibmPlexSansThai(
+                              fontSize: 13, color: Colors.grey.shade700)),
+                      const SizedBox(height: 4),
+                      Text(reason,
+                          style: GoogleFonts.ibmPlexSansThai(
+                              fontSize: 15, fontWeight: FontWeight.w600)),
+                    ],
+                    if (note.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Text(note,
+                          style: GoogleFonts.ibmPlexSansThai(
+                              fontSize: 14, color: Colors.grey.shade800)),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text('หากข้อมูลไม่ถูกต้อง กรุณาติดต่อฝ่ายบุคคล',
+                textAlign: TextAlign.center,
+                style: GoogleFonts.ibmPlexSansThai(
+                    fontSize: 13, color: Colors.grey.shade600)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _suspensionRow(IconData icon, String label, String value) {
+    return Row(
+      children: [
+        Icon(icon, size: 20, color: Colors.orange.shade800),
+        const SizedBox(width: 10),
+        Text(label,
+            style: GoogleFonts.ibmPlexSansThai(
+                fontSize: 14, color: Colors.grey.shade800)),
+        const Spacer(),
+        Text(value,
+            style: GoogleFonts.ibmPlexSansThai(
+                fontSize: 15, fontWeight: FontWeight.w700)),
+      ],
+    );
+  }
+
+  /// แถวข้อมูล 1 บรรทัด — ชื่อรายการชิดซ้าย ค่าชิดขวา อ่านกวาดตาลงมาได้เร็ว
+  Widget _infoRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    Color? valueColor,
+  }) {
+    return Row(
+      children: [
+        Icon(icon, size: 17, color: AppColors.textMuted),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            label,
+            style: GoogleFonts.ibmPlexSansThai(
+              fontSize: 13.5,
+              color: AppColors.textMuted,
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Flexible(
+          child: Text(
+            value.isEmpty ? '-' : value,
+            textAlign: TextAlign.right,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: GoogleFonts.ibmPlexSansThai(
+              fontSize: 14.5,
+              fontWeight: FontWeight.w600,
+              color: valueColor ?? AppColors.text,
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -465,42 +646,66 @@ class CheckinScreenState extends State<CheckinScreen> {
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                  '👤 คุณ: ${_checkinData?['firstName']} ${_checkinData?['lastName']}',
-                  style: const TextStyle(fontSize: 16)),
-              const SizedBox(height: 6),
-              // แสดงข้อความโหมดสาธิตเมื่อเป็นไปตามเงื่อนไข
-              if (_allowOffsiteTime == 1)
-                Text('📍 โหมดสาธิต: ไม่จำกัดพื้นที่',
-                    style: TextStyle(
-                        fontSize: 16,
-                        color: const Color(0xFF1A1A1A),
-                        fontWeight: FontWeight.bold))
-              else ...[
-                Text(
-                    '📍 ระยะจากสาขา: ${_distanceInMeters?.toStringAsFixed(0) ?? '-'} เมตร',
-                    style: const TextStyle(fontSize: 16)),
-                if (_currentPosition != null)
-                  Text(
-                    '📡 ความแม่นยำ GPS: ${_currentPosition!.accuracy.toStringAsFixed(0)} เมตร',
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: _currentPosition!.accuracy <= 20
-                          ? Colors.green.shade700
-                          : _currentPosition!.accuracy <= 50
-                              ? Colors.orange.shade700
-                              : Colors.red.shade700,
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+          child: AppPanel(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            child: Column(
+              children: [
+                _infoRow(
+                  icon: Icons.badge_outlined,
+                  label: 'พนักงาน',
+                  value:
+                      '${_checkinData?['firstName'] ?? ''} ${_checkinData?['lastName'] ?? ''}'
+                          .trim(),
+                ),
+                const Divider(height: 18),
+                // แสดงข้อความโหมดสาธิตเมื่อเป็นไปตามเงื่อนไข
+                if (_allowOffsiteTime == 1)
+                  const Align(
+                    alignment: Alignment.centerLeft,
+                    child: AppStatusChip(
+                      label: 'โหมดสาธิต: ลงเวลาได้ทุกพื้นที่',
+                      color: AppColors.warning,
                     ),
+                  )
+                else ...[
+                  _infoRow(
+                    icon: Icons.place_outlined,
+                    label: 'ระยะจากสาขา',
+                    value: _distanceInMeters == null
+                        ? '-'
+                        : '${NumberFormat('#,##0').format(_distanceInMeters)} เมตร',
                   ),
-                if (!inRange && _distanceInMeters != null)
-                  const Text('(คุณอยู่นอกพื้นที่ที่กำหนด)',
-                      style: TextStyle(color: Colors.red)),
+                  if (_currentPosition != null) ...[
+                    const SizedBox(height: 8),
+                    _infoRow(
+                      icon: Icons.gps_fixed_rounded,
+                      label: 'ความแม่นยำ GPS',
+                      value:
+                          '${_currentPosition!.accuracy.toStringAsFixed(0)} เมตร',
+                      // ตัวเลขยิ่งน้อยยิ่งแม่น — สีบอกคุณภาพสัญญาณก่อนกดลงเวลา
+                      valueColor: _currentPosition!.accuracy <= 20
+                          ? AppColors.success
+                          : _currentPosition!.accuracy <= 50
+                              ? AppColors.warning
+                              : AppColors.danger,
+                    ),
+                  ],
+                  if (_distanceInMeters != null) ...[
+                    const SizedBox(height: 12),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: AppStatusChip(
+                        label: inRange
+                            ? 'อยู่ในพื้นที่ลงเวลา'
+                            : 'อยู่นอกพื้นที่ที่กำหนด',
+                        color: inRange ? AppColors.success : AppColors.danger,
+                      ),
+                    ),
+                  ],
+                ],
               ],
-            ],
+            ),
           ),
         ),
         Expanded(

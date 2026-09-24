@@ -167,6 +167,37 @@ class OdooRpcService {
   // ===== API Methods สำหรับแอป =====
 
   /// ดึงข้อมูลพนักงานจาก employee.salary
+  /// สถานะพักงาน ณ วันนี้ — คืน null ถ้าไม่ได้ถูกพักงาน
+  ///
+  /// อ่านจาก employee.suspension ใน Odoo ซึ่งเป็นที่เดียวที่ HR บันทึกคำสั่ง
+  /// ใช้ตอนเข้าหน้าลงเวลาเพื่อกันไม่ให้คนที่ถูกพักงานตอกบัตร
+  Future<Map<String, dynamic>?> getSuspensionStatus(String employeeCode) async {
+    if (employeeCode.isEmpty) return null;
+    try {
+      final today = DateTime.now();
+      final todayStr = '${today.year.toString().padLeft(4, '0')}-'
+          '${today.month.toString().padLeft(2, '0')}-'
+          '${today.day.toString().padLeft(2, '0')}';
+      final rows = await searchRead(
+        model: 'employee.suspension',
+        domain: [
+          ['employee_code', '=', employeeCode],
+          ['active', '=', true],
+          ['date_start', '<=', todayStr],
+          ['date_end', '>=', todayStr],
+        ],
+        fields: const ['date_start', 'date_end', 'reason', 'note', 'day_count'],
+        limit: 1,
+      );
+      if (rows.isEmpty) return null;
+      return Map<String, dynamic>.from(rows.first as Map);
+    } catch (e) {
+      // ถามไม่ได้ก็ให้ลงเวลาได้ตามปกติ ดีกว่าบล็อกคนทั้งบริษัทเพราะเน็ตสะดุด
+      debugPrint('เช็คสถานะพักงานไม่สำเร็จ: $e');
+      return null;
+    }
+  }
+
   Future<Map<String, dynamic>?> getEmployeeInfo(String employeeCode) async {
     final results = await searchRead(
       model: 'employee.salary',
@@ -244,8 +275,11 @@ class OdooRpcService {
       fields: [
         'id', 'name', 'report_year', 'state',
         'company_id', 'employee_taxid',
-        'wt_line', 'total_net_salary',
+        'wt_line', 'total_net_salary', 'total_tax',
+        // ยอดกองทุนทั้งปี — อยู่บนหนังสือรับรองฯ ต้องแสดงในแอปด้วย
+        'sso_amount', 'provident_fund_amount',
       ],
+      // ไม่ใส่ limit เพื่อให้ได้ทุกปีที่เคยออกเอกสาร (เรียงปีใหม่สุดขึ้นก่อน)
       order: 'report_year desc',
     );
 
@@ -275,6 +309,9 @@ class OdooRpcService {
         'company_name': cert['company_id'] is List ? (cert['company_id'] as List).last : '',
         'employee_taxid': cert['employee_taxid'] ?? '',
         'total_net_salary': cert['total_net_salary'] ?? 0,
+        'total_tax': cert['total_tax'] ?? 0,
+        'sso_amount': cert['sso_amount'] ?? 0,
+        'provident_fund_amount': cert['provident_fund_amount'] ?? 0,
         'lines': lines,
       });
     }
@@ -386,6 +423,78 @@ class OdooRpcService {
     }
   }
 
+  /// ดึง "นาทีที่สาย" รายวันของเดือนนั้น สำหรับแสดงใต้เวลาเข้างานในประวัติลงเวลา
+  ///
+  /// อิงสูตรคิดสายที่ตั้งไว้ใน Odoo (เมนู "กำหนดสูตรคิดสาย") ทั้งหมด —
+  /// ฝั่งแอปไม่คำนวณเองสักนิด พอ HR เปลี่ยนสูตรหรือวันเริ่มใช้ แอปตามทันที
+  /// และตัวเลขที่โชว์เป็นนาทีเดียวกับที่ payroll หักจริง
+  ///
+  /// คืน map {'YYYY-MM-DD': {'minutes': นาที, 'checkin': 'HH:MM'}}
+  /// เฉพาะวันที่สายจริง (ไม่สาย = ไม่มี key)
+  ///
+  /// ที่มี `checkin` มาด้วยเพราะวันหนึ่งสแกนเข้าได้หลายครั้ง แต่ระบบคิดสาย
+  /// จาก "ครั้งแรกของวัน" ครั้งเดียว แอปต้องรู้ว่าจะแปะข้อความที่แถวไหน
+  ///
+  /// ดึงไม่ได้ (เน็ตล่ม / ยังไม่ตั้งตารางกะ) จะคืน map ว่าง → แค่ไม่แสดงข้อความ
+  Future<Map<String, LateInfo>> getLateMinutes(
+      String employeeCode, int month, int year) async {
+    if (employeeCode.isEmpty) return {};
+    try {
+      final result = await callKw(
+        model: 'payroll.lateness.rule',
+        method: 'api_get_late_minutes',
+        args: [employeeCode, month, year],
+      );
+      if (result is Map) {
+        final Map<String, LateInfo> parsed = {};
+        result.forEach((key, value) {
+          if (value is! Map) return;
+          final raw = value['minutes'];
+          final minutes =
+              raw is num ? raw.toInt() : int.tryParse(raw.toString()) ?? 0;
+          if (minutes > 0) {
+            parsed[key.toString()] = LateInfo(
+              minutes: minutes,
+              checkin: value['checkin']?.toString() ?? '',
+            );
+          }
+        });
+        return parsed;
+      }
+      return {};
+    } catch (e) {
+      debugPrint('❌ getLateMinutes error: $e');
+      return {};
+    }
+  }
+
+  /// ดึงชื่อ + ที่อยู่บริษัทตาม "สังกัด" ของพนักงาน สำหรับหัวสลิปเงินเดือน
+  ///
+  /// อ่านจาก Odoo ที่เดียว (`payroll.salary._company_info_by_key`) ซึ่งเป็นตัวเดียว
+  /// กับที่สลิป PDF ฝั่ง Odoo ใช้ — ย้ายออฟฟิศเมื่อไหร่แก้ที่ Odoo จุดเดียว
+  /// แอปตามทันทีโดยไม่ต้อง build ใหม่
+  ///
+  /// คืน null ถ้าดึงไม่ได้ (เน็ตล่ม) → ให้ฝั่งเรียกใช้ค่าสำรองในเครื่อง
+  Future<Map<String, String>?> getCompanyInfo(String employeeCode) async {
+    if (employeeCode.isEmpty) return null;
+    try {
+      final result = await callKw(
+        model: 'payroll.salary',
+        method: 'api_get_company_info',
+        args: [employeeCode],
+      );
+      if (result is Map) {
+        final name = result['name']?.toString() ?? '';
+        final address = result['address']?.toString() ?? '';
+        if (name.isNotEmpty) return {'name': name, 'address': address};
+      }
+      return null;
+    } catch (e) {
+      debugPrint('❌ getCompanyInfo error: $e');
+      return null;
+    }
+  }
+
   /// ดึงรายการประเภทค่าเบี้ยเลี้ยงตามรหัสพนักงาน (อิงจากสาขาของพนักงาน)
   /// คืนค่า: List ของ {name, amount (nullable), has_amount, note}
   Future<List<Map<String, dynamic>>> getAllowanceTypesByEmployee(String employeeCode) async {
@@ -413,10 +522,74 @@ class OdooRpcService {
     }
   }
 
+  // ===== ค่ารักษาพยาบาล =====
+
+  /// ดึงข้อมูลค่ารักษาพยาบาลที่ต้องใช้ตอนกรอกคำขอ:
+  /// วงเงินต่อปี / ใช้ไปแล้ว / คงเหลือที่เบิกได้ / รายชื่อธนาคาร /
+  /// บัญชีธนาคารที่ผูกไว้กับพนักงาน
+  ///
+  /// [excludePhpId] = id ของคำขอที่กำลังแก้ไข เพื่อไม่ให้ยอดของใบนั้นถูกหักซ้ำ
+  ///
+  /// คืน null เมื่อติดต่อ Odoo ไม่ได้ — ผู้เรียกต้องแยกกรณีนี้ออกจาก
+  /// "คงเหลือ 0" ไม่งั้นเน็ตหลุดทีเดียวพนักงานจะเบิกอะไรไม่ได้เลย
+  Future<Map<String, dynamic>?> getMedicalExpenseInfo(
+    String employeeCode, {
+    int? excludePhpId,
+  }) async {
+    if (employeeCode.isEmpty) return null;
+    try {
+      final result = await callKw(
+        model: 'medical.expense',
+        method: 'api_get_medical_info',
+        args: [employeeCode, excludePhpId],
+      );
+      if (result is Map) {
+        final banks = <Map<String, String>>[];
+        final rawBanks = result['banks'];
+        if (rawBanks is List) {
+          for (final b in rawBanks) {
+            if (b is Map) {
+              banks.add({
+                'code': (b['code'] ?? '').toString(),
+                'name': (b['name'] ?? '').toString(),
+                'short': (b['short'] ?? '').toString(),
+              });
+            }
+          }
+        }
+        double toDouble(dynamic v) =>
+            v is num ? v.toDouble() : double.tryParse(v?.toString() ?? '') ?? 0.0;
+
+        return {
+          'ok': result['ok'] == true,
+          'message': (result['message'] ?? '').toString(),
+          'year': result['year'] is num ? (result['year'] as num).toInt() : null,
+          'employee_name': (result['employee_name'] ?? '').toString(),
+          'limit': toDouble(result['limit']),
+          'used_approved': toDouble(result['used_approved']),
+          'used_pending': toDouble(result['used_pending']),
+          'remaining': toDouble(result['remaining']),
+          'bank_name': (result['bank_name'] ?? '').toString(),
+          'bank_account_number': (result['bank_account_number'] ?? '').toString(),
+          'banks': banks,
+        };
+      }
+      return null;
+    } catch (e) {
+      debugPrint('❌ getMedicalExpenseInfo error: $e');
+      return null;
+    }
+  }
+
   // ===== ใบเตือนพนักงาน =====
 
   /// ดึงจำนวนใบเตือนของพนักงาน (เร็ว ใช้โชว์ badge)
-  Future<int> getEmployeeWarningCount(String employeeCode) async {
+  /// คืนจำนวนใบเตือน หรือ null ถ้า "ติดต่อเซิร์ฟเวอร์ไม่ได้"
+  ///
+  /// ต้องแยก 0 (ไม่มีใบเตือนจริง ๆ) ออกจาก null (ไม่รู้ เพราะเน็ตหลุด)
+  /// ไม่งั้นเน็ตกระตุกทีเดียว แอปจะเข้าใจว่าใบเตือนหายหมด แล้วไปลบ
+  /// สถานะ "อ่านแล้ว" ทิ้ง พอเน็ตกลับมาก็เด้งแจ้งเตือนใบเก่าซ้ำ
+  Future<int?> getEmployeeWarningCount(String employeeCode) async {
     if (employeeCode.isEmpty) return 0;
     // ลองเรียก API method ก่อน
     try {
@@ -444,7 +617,7 @@ class OdooRpcService {
       return 0;
     } catch (e) {
       debugPrint('❌ getEmployeeWarningCount fallback error: $e');
-      return 0;
+      return null; // ไม่รู้ ≠ ไม่มี
     }
   }
 
@@ -650,4 +823,15 @@ class OdooRpcService {
       return null;
     }
   }
+}
+
+/// ข้อมูล "สาย" ของหนึ่งวัน
+class LateInfo {
+  /// นาทีที่ถูกนับเป็นสาย (ตัวเดียวกับที่ payroll หัก)
+  final int minutes;
+
+  /// เวลาเข้างานที่ระบบใช้คำนวณ เช่น "09:52" — ใช้จับคู่ว่าจะแสดงที่แถวไหน
+  final String checkin;
+
+  const LateInfo({required this.minutes, required this.checkin});
 }
